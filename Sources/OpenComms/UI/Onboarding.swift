@@ -1,7 +1,6 @@
 import SwiftUI
 import AVFoundation
 import CoreLocation
-import Contacts
 
 /// Three screens and one button.
 ///
@@ -54,7 +53,6 @@ struct OnboardingView: View {
                 VStack(spacing: 9) {
                     permissionRow("Microphone", "So your squad can hear you")
                     permissionRow("Location", "To show who's nearby")
-                    permissionRow("Contacts", "To match people you already know")
                     permissionRow("Bluetooth", "To use your AirPods")
                     permissionRow("Media & Apple Music", "To turn your music down and back up")
                     permissionRow("Local Network", "To connect voice directly when you're close")
@@ -101,12 +99,12 @@ struct OnboardingView: View {
         AVAudioApplication.requestRecordPermission { _ in
             DispatchQueue.main.async {
                 NearbyEngine.shared.start()
-                CNContactStore().requestAccess(for: .contacts) { _, _ in
-                    DispatchQueue.main.async {
-                        store.prefs.onboarded = true
-                        asking = false
-                    }
-                }
+                // Contacts is deliberately not requested. The matching feature
+                // is not built — phone_hash is never set and match_contacts is
+                // never called — and asking for an address book the app does
+                // not use is both a review risk and the wrong thing to do.
+                store.prefs.onboarded = true
+                asking = false
             }
         }
     }

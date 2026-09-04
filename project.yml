@@ -64,9 +64,6 @@ targets:
         NSLocationWhenInUseUsageDescription: >-
           Shows who is nearby so you can open a line with one tap. Only while
           you have the app open, and you can hide any time.
-        NSContactsUsageDescription: >-
-          Finds which of your contacts already use open comms. Numbers are
-          scrambled on this phone before anything is sent.
         NSBluetoothAlwaysUsageDescription: >-
           Connects your AirPods or other Bluetooth headphones to the line.
         NSAppleMusicUsageDescription: >-

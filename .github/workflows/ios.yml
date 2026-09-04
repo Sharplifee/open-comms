@@ -38,6 +38,13 @@ jobs:
       - name: Audit RPC signatures
         run: python3 scripts/audit_rpc_params.py
 
+      # The larger version of the same failure: state nothing fills, and
+      # permissions nothing uses. Both have shipped here — the nearby radar
+      # rendered an array no code ever assigned, and onboarding asked for the
+      # address book for a feature that was never built.
+      - name: Audit for unreachable features
+        run: python3 scripts/audit_unreached.py
+
       - name: Generate project
         run: xcodegen generate
 

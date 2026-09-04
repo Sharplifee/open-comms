@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 /// Every call the app makes to its own server.
 ///
@@ -108,26 +107,7 @@ actor Backend {
         _ = try? await rpcVoid("delete_device", ["p_device_id": DeviceIdentity.id])
     }
 
-    // MARK: - Contacts
-
-    /// Only hashes leave the phone. The server cannot recover a number from
-    /// one, and cannot be used to enumerate anybody, because you can only ask
-    /// about hashes you already hold — which means you already had the number.
-    func matchContacts(hashes: [String]) async throws -> [ContactMatch] {
-        try await rpc("match_contacts", ["p_hashes": hashes])
-    }
-
-    static func hash(phone: String) -> String {
-        let digits = phone.filter(\.isNumber)
-        let e164 = digits.count == 10 ? "+1\(digits)" : "+\(digits)"
-        return SHA256.hash(data: Data(e164.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-
     // MARK: - Safety
-
-    func block(_ deviceID: String) async {
-        _ = try? await rpcVoid("block_device", ["p_blocker": DeviceIdentity.id, "p_blocked": deviceID])
-    }
 
     func unblock(_ deviceID: String) async {
         _ = try? await rpcVoid("unblock_device", ["p_blocker": DeviceIdentity.id, "p_blocked": deviceID])
@@ -221,12 +201,6 @@ struct JoinRow: Decodable {
     let r_squad_name: String?
     let r_join_code: String?
     let r_is_creator: Bool
-}
-
-struct ContactMatch: Decodable, Identifiable {
-    var id: String { phone_hash }
-    let phone_hash: String
-    let display_name: String
 }
 
 /// Decoded straight from the RPC, so the field names are the server's.
