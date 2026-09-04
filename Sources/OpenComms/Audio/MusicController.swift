@@ -13,10 +13,15 @@ final class MusicController {
     private let player = MPMusicPlayerController.systemMusicPlayer
 
     private var pausedByUs = false
-    private var talkStarted: Date?
+
+    /// How far back to drop in when the track restarts after a pause.
+    ///
+    /// Nothing is missed while the music is paused — the track is exactly
+    /// where it stopped — so the only reason to rewind at all is that coming
+    /// back mid-word is jarring. A couple of seconds of run-up fixes that.
+    private let reentryLead: TimeInterval = 3
 
     func speechBegan(_ behaviour: MusicBehaviour) {
-        talkStarted = Date()
         switch behaviour {
         case .turnDown:
             AudioSession.shared.duck(true)
@@ -37,22 +42,29 @@ final class MusicController {
         case .pauseAndRewind:
             guard pausedByUs else { return }
             pausedByUs = false
-            // Back up by however long the talking lasted, plus a couple of
-            // seconds, because the last thing said before you started
-            // listening is usually the part you wanted.
-            let spoken = Date().timeIntervalSince(talkStarted ?? Date())
-            player.currentPlaybackTime = max(0, player.currentPlaybackTime - (spoken + 2))
+            // Rewind by a short run-up, NOT by how long the talking lasted.
+            //
+            // The old version backed up by the full length of the
+            // conversation, which is the rule for music that kept playing —
+            // and this music did not. It was paused, so the track sat exactly
+            // where it stopped and nothing was missed. Backing up two minutes
+            // after a two minute chat replayed two minutes somebody had
+            // already heard, every single time.
+            player.currentPlaybackTime = max(0, player.currentPlaybackTime - reentryLead)
             player.play()
         case .leaveAlone:
             break
         }
-        talkStarted = nil
     }
 
     /// Belt and braces for the moment a line closes: nothing should be left
     /// ducked or paused by us.
     func restore() {
         AudioSession.shared.duck(false)
-        if pausedByUs { player.play(); pausedByUs = false }
+        if pausedByUs {
+            pausedByUs = false
+            player.currentPlaybackTime = max(0, player.currentPlaybackTime - reentryLead)
+            player.play()
+        }
     }
 }
