@@ -18,6 +18,7 @@ struct LineView: View {
     @State private var showKeypad = false
     @State private var creating = false
     @State private var leaving = false
+    @State private var pickingFocus = false
 
     var body: some View {
         ScrollView {
@@ -39,6 +40,15 @@ struct LineView: View {
             Text("You can step off on your own, or close it for everyone on it.")
         }
         .overlay { if case .opening = line.phase { ConnectingOverlay() } }
+        .overlay { if line.focusSecondsLeft > 0 { FocusOverlay() } }
+        .confirmationDialog("Focus for how long?", isPresented: $pickingFocus, titleVisibility: .visible) {
+            ForEach(FocusLength.allCases) { length in
+                Button(length.title) { line.startFocus(length) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Nobody comes through until it's over, or until you cancel.")
+        }
         .alert("Couldn't open the line", isPresented: failureBinding) {
             Button("OK") { line.dismissFailure() }
         } message: {
@@ -106,6 +116,7 @@ struct LineView: View {
 
             if !store.saved.isEmpty { savedSquads }
             nearbyCard
+            visibilitySwitches
             micCheck
         }
         .padding(.horizontal, 22)
@@ -196,6 +207,44 @@ struct LineView: View {
         .padding(.top, 26)
     }
 
+    /// Two switches over one value. People reach for "hide me" and "keep this
+    /// off the radar" as separate thoughts, but they are the same question, so
+    /// both write to visibility rather than drifting apart.
+    private var visibilitySwitches: some View {
+        HStack(spacing: 11) {
+            switchTile(title: "GHOST MODE",
+                       detail: "Hide from nearby entirely",
+                       isOn: $store.prefs.ghostMode)
+            switchTile(title: "PRIVATE",
+                       detail: "Stay off the radar, lines by code",
+                       isOn: $store.prefs.privateLine)
+        }
+        .padding(.top, 12)
+        .onChange(of: store.prefs.visibility) { _, option in
+            Task { await Backend.shared.setHidden(option == .hidden) }
+            if option == .hidden { nearby.stop() } else { nearby.start() }
+        }
+    }
+
+    private func switchTile(title: String, detail: String, isOn: Binding<Bool>) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .rounded)).kerning(0.6)
+            Text(detail)
+                .font(.system(size: 10.5, design: .rounded))
+                .foregroundStyle(Theme.muted)
+                .padding(.top, 4)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(Theme.signal)
+                .padding(.top, 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .cardSurface(Theme.rowRadius)
+    }
+
     private var micCheck: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
@@ -276,6 +325,23 @@ struct LineView: View {
                 .padding(.top, 18)
             }
 
+            // Focus and Mute All sit beside the exit because all three are
+            // things you reach for mid-set without looking: silence them for a
+            // stretch, silence them until you say otherwise, or get off.
+            HStack(spacing: 11) {
+                controlTile(title: line.focusSecondsLeft > 0 ? "\(line.focusSecondsLeft)s" : "Focus",
+                            symbol: "scope",
+                            active: line.focusSecondsLeft > 0) {
+                    if line.focusSecondsLeft > 0 { line.endFocus() } else { pickingFocus = true }
+                }
+                controlTile(title: line.mutedEveryone ? "Unmute all" : "Mute all",
+                            symbol: line.mutedEveryone ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                            active: line.mutedEveryone) {
+                    line.setMuteEveryone(!line.mutedEveryone)
+                }
+            }
+            .padding(.top, 18)
+
             Button("Leave the line") { leaving = true }
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(Theme.danger)
@@ -285,6 +351,22 @@ struct LineView: View {
                 .padding(.top, 20)
         }
         .padding(.horizontal, 22)
+    }
+
+    private func controlTile(title: String, symbol: String, active: Bool,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 17, weight: .semibold))
+                Text(title).font(.system(size: 12, weight: .semibold, design: .rounded))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 15)
+            .foregroundStyle(active ? Theme.signal : Theme.text)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
+                .stroke(active ? Theme.signal : Theme.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private var headline: String {

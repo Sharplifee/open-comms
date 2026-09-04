@@ -106,6 +106,14 @@ enum Visibility: String, Codable, CaseIterable {
     }
 }
 
+/// How long incoming voices stay suppressed. Four fixed lengths rather than a
+/// picker, because the whole point is one tap in the middle of a set.
+enum FocusLength: Int, CaseIterable, Identifiable {
+    case thirty = 30, sixty = 60, ninety = 90, twoMinutes = 120
+    var id: Int { rawValue }
+    var title: String { "\(rawValue) seconds" }
+}
+
 struct Preferences: Codable {
     var displayName = ""
     var music: MusicBehaviour = .turnDown
@@ -117,6 +125,19 @@ struct Preferences: Codable {
     var soundCues = true
     var theirVolume: Double = 0.8
     var onboarded = false
+
+    /// The Home screen shows these as two switches because that is how people
+    /// think about them. They are not two settings: hidden beats code-only,
+    /// and both off means visible, so all three states stay reachable and no
+    /// combination is contradictory.
+    var ghostMode: Bool {
+        get { visibility == .hidden }
+        set { visibility = newValue ? .hidden : .visible }
+    }
+    var privateLine: Bool {
+        get { visibility != .visible }
+        set { if visibility != .hidden { visibility = newValue ? .codeOnly : .visible } }
+    }
 
     var thresholdDB: Double { -55 + sensitivity * 43 }
     var sensitivityLabel: String {

@@ -27,9 +27,10 @@ struct MainTabs: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            LineView().tabItem { Label("Line", systemImage: "waveform") }.tag(0)
+            LineView().tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
             SquadView().tabItem { Label("Squad", systemImage: "person.2.fill") }.tag(1)
-            SettingsView().tabItem { Label("Settings", systemImage: "slider.horizontal.3") }.tag(2)
+            SettingsView().tabItem { Label("Audio", systemImage: "slider.horizontal.3") }.tag(2)
+            DiagView().tabItem { Label("Diag", systemImage: "gauge.with.dots.needle.bottom.50percent") }.tag(3)
         }
     }
 }

@@ -24,6 +24,12 @@ final class LineManager: NSObject, ObservableObject {
     @Published var micLive = false
     @Published var banner: String?
 
+    /// Everyone silenced at once, and for how long. Mute All is the version
+    /// you undo yourself; Focus is the version that undoes itself, because in
+    /// the middle of a heavy set you will not remember to turn it back on.
+    @Published private(set) var mutedEveryone = false
+    @Published private(set) var focusUntil: Date?
+
     private let room = Room()
     private let detector = VoiceDetector()
 
@@ -43,6 +49,7 @@ final class LineManager: NSObject, ObservableObject {
     /// breath does not bounce the music, and cancelled the moment anybody
     /// speaks again.
     private var restoreMusic: Task<Void, Never>?
+    private var focus: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
     private var store: Store { Store.shared }
 
@@ -182,6 +189,9 @@ final class LineManager: NSObject, ObservableObject {
         heartbeat?.cancel(); heartbeat = nil
         detector.stop()
         restoreMusic?.cancel(); restoreMusic = nil
+        focus?.cancel(); focus = nil
+        focusUntil = nil
+        mutedEveryone = false
         musicIsYielding = false
         MusicController.shared.restore()
         await room.disconnect()
@@ -213,7 +223,8 @@ final class LineManager: NSObject, ObservableObject {
     func setMuted(_ muted: Bool, for member: Member) {
         guard let index = members.firstIndex(where: { $0.deviceID == member.deviceID }) else { return }
         members[index].mutedForMe = muted
-        apply(volume: muted ? 0 : members[index].volume, to: member.deviceID)
+        applyChosenVolume()
+        applyMusicBehaviour()
     }
 
     func setVolume(_ volume: Double, for member: Member) {
@@ -228,6 +239,40 @@ final class LineManager: NSObject, ObservableObject {
     /// mid-workout changed the number on screen and nothing else until the
     /// next line. The whole point of that control is adjusting it while you
     /// are talking.
+    /// Silence every incoming voice, or let them back in.
+    func setMuteEveryone(_ on: Bool) {
+        mutedEveryone = on
+        applyChosenVolume()
+        Haptics.tap(.light)
+    }
+
+    /// Suppress incoming voices for a fixed stretch and put them back without
+    /// being asked. Cancelling is one tap, so nobody is stuck in it.
+    func startFocus(_ length: FocusLength) {
+        focus?.cancel()
+        focusUntil = Date().addingTimeInterval(TimeInterval(length.rawValue))
+        applyChosenVolume()
+        focus = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(length.rawValue))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.endFocus() }
+        }
+        Haptics.tap()
+    }
+
+    func endFocus() {
+        focus?.cancel(); focus = nil
+        guard focusUntil != nil else { return }
+        focusUntil = nil
+        applyChosenVolume()
+        Haptics.tap(.light)
+    }
+
+    var focusSecondsLeft: Int {
+        guard let focusUntil else { return 0 }
+        return max(0, Int(focusUntil.timeIntervalSinceNow.rounded(.up)))
+    }
+
     func applySensitivity() {
         detector.threshold = store.prefs.thresholdDB
     }
@@ -239,16 +284,22 @@ final class LineManager: NSObject, ObservableObject {
     }
 
     /// Apply the "how loud they are" slider to everyone currently on the line.
+    /// The single place that decides how loud a remote voice actually is.
+    ///
+    /// Four things can silence somebody — the intercom slider, muting them,
+    /// Mute All and Focus — and when each of them applied its own volume
+    /// directly they overwrote each other: unmuting one person undid Focus,
+    /// and leaving Focus restored somebody you had muted an hour ago.
     func applyChosenVolume() {
         let chosen = store.prefs.theirVolume
+        let silenced = mutedEveryone || focusUntil != nil
         for index in members.indices where !members[index].isSelf {
             members[index].volume = chosen
             if blockedDevices.contains(members[index].deviceID) {
                 members[index].mutedForMe = true
             }
-            if !members[index].mutedForMe {
-                apply(volume: chosen, to: members[index].deviceID)
-            }
+            let audible = !silenced && !members[index].mutedForMe
+            apply(volume: audible ? chosen : 0, to: members[index].deviceID)
         }
     }
 
