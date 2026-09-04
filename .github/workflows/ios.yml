@@ -14,7 +14,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+        run: |
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "using $LATEST"
+          sudo xcode-select -s "$LATEST"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -39,15 +42,15 @@ jobs:
           security set-keychain-settings -t 3600 -u $KEYCHAIN
 
           curl -sfL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o wwdr.cer
-          security import wwdr.cer -k $KEYCHAIN -T /usr/bin/codesign || true
+          security import wwdr.cer -k $KEYCHAIN -f x509Cert -T /usr/bin/codesign || true
 
-          echo "$DIST_P12" | base64 --decode > dist.p12
-          security import dist.p12 -k $KEYCHAIN -P "$DIST_P12_PASSWORD" \
+          python3 -c "import base64,os,sys; open('dist.p12','wb').write(base64.b64decode(os.environ['DIST_P12']))"
+          security import dist.p12 -k $KEYCHAIN -P "$DIST_P12_PASSWORD" -f pkcs12 \
             -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions $KEYCHAIN
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/opencomms.mobileprovision
+          python3 -c "import base64,os; open(os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/opencomms.mobileprovision'),'wb').write(base64.b64decode(os.environ['PROFILE']))"
 
           security find-identity -v -p codesigning $KEYCHAIN
 
