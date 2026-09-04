@@ -26,6 +26,12 @@ final class LineManager: NSObject, ObservableObject {
 
     private let room = Room()
     private let detector = VoiceDetector()
+
+    /// Everyone this device has blocked, loaded when a line opens. Held here
+    /// so a block survives leaving and coming back — previously it lived only
+    /// in the member list, so rejoining the same code made a blocked person
+    /// audible again at full volume.
+    private var blockedDevices: Set<String> = []
     private var heartbeat: Task<Void, Never>?
     private var store: Store { Store.shared }
 
@@ -90,6 +96,12 @@ final class LineManager: NSObject, ObservableObject {
             case .rateLimited:
                 let seconds = max(result.retryAfter, 1)
                 phase = .failed("Too many tries. Give it \(seconds) seconds.")
+            case .blocked:
+                // Deliberately vague about who and in which direction. Naming
+                // the person tells a blocked stranger exactly who blocked them,
+                // and tells anybody who blocked somebody that the person is
+                // standing on that line right now.
+                phase = .failed("You can't join that line.")
             }
         } catch {
             // A timeout is the common case here, and it must say something a
@@ -116,6 +128,7 @@ final class LineManager: NSObject, ObservableObject {
         store.remember(squad)
         detector.threshold = store.prefs.thresholdDB
         detector.start()
+        blockedDevices = Set(await Backend.shared.blocked().map(\.deviceID))
         applyChosenVolume()
         Cues.opened(store.prefs.soundCues)
         Haptics.tap()
@@ -210,6 +223,9 @@ final class LineManager: NSObject, ObservableObject {
         let chosen = store.prefs.theirVolume
         for index in members.indices where !members[index].isSelf {
             members[index].volume = chosen
+            if blockedDevices.contains(members[index].deviceID) {
+                members[index].mutedForMe = true
+            }
             if !members[index].mutedForMe {
                 apply(volume: chosen, to: members[index].deviceID)
             }
@@ -230,6 +246,7 @@ final class LineManager: NSObject, ObservableObject {
 
     func blockAndReport(_ member: Member, reason: String) async {
         await Backend.shared.report(member.deviceID, squadID: squad?.id, reason: reason, detail: nil)
+        blockedDevices.insert(member.deviceID)
         members.removeAll { $0.deviceID == member.deviceID }
         apply(volume: 0, to: member.deviceID)
         banner = "\(member.displayName) blocked and reported"
@@ -277,10 +294,15 @@ extension LineManager: RoomDelegate {
             // and you had to nudge the control to fix a setting you had
             // already set.
             let chosen = Store.shared.prefs.theirVolume
+            // The server refuses a blocked person at the door, but a block
+            // made while both of you are already on a line has to take hold
+            // without waiting for anybody to rejoin.
+            let isBlocked = blockedDevices.contains(id)
             members.append(Member(deviceID: id,
                                   displayName: participant.name ?? "Someone",
+                                  mutedForMe: isBlocked,
                                   volume: chosen))
-            apply(volume: chosen, to: id)
+            apply(volume: isBlocked ? 0 : chosen, to: id)
             Cues.joined(Store.shared.prefs.soundCues)
             Haptics.tap(.light)
         }

@@ -8,6 +8,10 @@ import Foundation
 enum JoinOutcome: String, Codable {
     case ok, invalid, rateLimited = "rate_limited", notFound = "not_found"
     case expired, full, taken
+    /// Somebody on that line is blocked, in one direction or the other. The
+    /// server refuses at the door rather than letting you in and muting them,
+    /// because a mute only lasts as long as the app stays open.
+    case blocked
 }
 
 struct Squad: Identifiable, Codable, Equatable {
