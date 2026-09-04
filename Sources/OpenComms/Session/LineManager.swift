@@ -32,6 +32,12 @@ final class LineManager: NSObject, ObservableObject {
     /// in the member list, so rejoining the same code made a blocked person
     /// audible again at full volume.
     private var blockedDevices: Set<String> = []
+
+    /// Whether the music has already been asked to step aside. Ducking is a
+    /// state, not an event: without this, overlapping speakers produce paired
+    /// begin and end calls and the first person to stop restores the music
+    /// while somebody else is still talking.
+    private var musicIsYielding = false
     private var heartbeat: Task<Void, Never>?
     private var store: Store { Store.shared }
 
@@ -170,6 +176,7 @@ final class LineManager: NSObject, ObservableObject {
     private func teardown() async {
         heartbeat?.cancel(); heartbeat = nil
         detector.stop()
+        musicIsYielding = false
         MusicController.shared.restore()
         await room.disconnect()
         AudioSession.shared.deactivate()
@@ -183,9 +190,16 @@ final class LineManager: NSObject, ObservableObject {
 
     func setMic(_ on: Bool) {
         micLive = on
+        if !on, let index = members.firstIndex(where: { $0.isSelf }) {
+            // Muting yourself stops YOU talking; it says nothing about the
+            // other people on the line. Restoring the music unconditionally
+            // here used to shove your track back to full volume in the middle
+            // of somebody else's sentence.
+            members[index].isSpeaking = false
+        }
+        applyMusicBehaviour()
         Task {
             try? await room.localParticipant.setMicrophone(enabled: on)
-            if !on { MusicController.shared.restore() }
         }
         Haptics.tap(.light)
     }
@@ -254,13 +268,37 @@ final class LineManager: NSObject, ObservableObject {
 
     private func localSpeech(_ speaking: Bool) {
         guard micLive else { return }
-        if speaking {
+        if let index = members.firstIndex(where: { $0.isSelf }) {
+            members[index].isSpeaking = speaking
+        }
+        applyMusicBehaviour()
+    }
+
+    /// Get out of the way whenever ANYBODY on the line is talking.
+    ///
+    /// The music only moved when you spoke. The entire product is hearing
+    /// somebody else over your music, and that was the one case that did
+    /// nothing: your partner talked, your track carried on at full volume,
+    /// and you heard them underneath it.
+    ///
+    /// Driven from a single computed state rather than per-event, because two
+    /// people talking over each other produced overlapping begin and end
+    /// pairs — one person stopping restored the music while the other was
+    /// still mid-sentence.
+    private func applyMusicBehaviour() {
+        let anyoneTalking = members.contains { member in
+            guard member.isSpeaking else { return false }
+            // Somebody muted for you is not talking as far as your music is
+            // concerned — you cannot hear them, so there is nothing to make
+            // room for.
+            return member.isSelf || !member.mutedForMe
+        }
+        guard anyoneTalking != musicIsYielding else { return }
+        musicIsYielding = anyoneTalking
+        if anyoneTalking {
             MusicController.shared.speechBegan(store.prefs.music)
         } else {
             MusicController.shared.speechEnded(store.prefs.music)
-        }
-        if let index = members.firstIndex(where: { $0.isSelf }) {
-            members[index].isSpeaking = speaking
         }
     }
 
@@ -323,6 +361,7 @@ extension LineManager: RoomDelegate {
             for index in members.indices where !members[index].isSelf {
                 members[index].isSpeaking = speaking.contains(members[index].deviceID)
             }
+            applyMusicBehaviour()
         }
     }
 
