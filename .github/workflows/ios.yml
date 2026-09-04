@@ -75,10 +75,6 @@ jobs:
           xcodebuild -project OpenComms.xcodeproj -scheme OpenComms \
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath build/OpenComms.xcarchive \
-            CODE_SIGN_STYLE=Manual \
-            PROVISIONING_PROFILE_SPECIFIER="open comms App Store" \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            DEVELOPMENT_TEAM=XF783932R2 \
             archive
 
       - name: Export
