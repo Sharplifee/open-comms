@@ -128,7 +128,7 @@ final class LineManager: NSObject, ObservableObject {
         store.remember(squad)
         detector.threshold = store.prefs.thresholdDB
         detector.start()
-        blockedDevices = Set(await Backend.shared.blocked().map(\.deviceID))
+        blockedDevices = Set(await Backend.shared.blocked().map(\.device_id))
         applyChosenVolume()
         Cues.opened(store.prefs.soundCues)
         Haptics.tap()
