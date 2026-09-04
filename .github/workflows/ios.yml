@@ -112,5 +112,5 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
-          pip3 install --quiet pyjwt cryptography
+          pip3 install --quiet --break-system-packages pyjwt cryptography
           python3 scripts/verify_upload.py ${{ github.run_number }}
