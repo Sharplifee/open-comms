@@ -101,6 +101,7 @@ final class LineManager: NSObject, ObservableObject {
     private func enterRoom(_ squad: Squad) async throws {
         let token = try await Backend.shared.livekitToken(squadID: squad.id,
                                                           displayName: store.prefs.displayName)
+        AudioSession.shared.cleanUpNoise = store.prefs.cleanUpNoise
         AudioSession.shared.configure()
         try await room.connect(url: Config.livekitURL, token: token)
         try await room.localParticipant.setMicrophone(enabled: true)
@@ -115,6 +116,7 @@ final class LineManager: NSObject, ObservableObject {
         store.remember(squad)
         detector.threshold = store.prefs.thresholdDB
         detector.start()
+        applyChosenVolume()
         Cues.opened(store.prefs.soundCues)
         Haptics.tap()
         startHeartbeat(squad.id)
@@ -169,6 +171,33 @@ final class LineManager: NSObject, ObservableObject {
         guard let index = members.firstIndex(where: { $0.deviceID == member.deviceID }) else { return }
         members[index].volume = volume
         if !members[index].mutedForMe { apply(volume: volume, to: member.deviceID) }
+    }
+
+    /// Push the sensitivity slider into the running detector.
+    ///
+    /// The threshold was only read when a line opened, so moving the slider
+    /// mid-workout changed the number on screen and nothing else until the
+    /// next line. The whole point of that control is adjusting it while you
+    /// are talking.
+    func applySensitivity() {
+        detector.threshold = store.prefs.thresholdDB
+    }
+
+    /// Push the noise setting into the audio session while a line is live.
+    func applyNoiseSetting() {
+        AudioSession.shared.cleanUpNoise = store.prefs.cleanUpNoise
+        AudioSession.shared.refreshMode()
+    }
+
+    /// Apply the "how loud they are" slider to everyone currently on the line.
+    func applyChosenVolume() {
+        let chosen = store.prefs.theirVolume
+        for index in members.indices where !members[index].isSelf {
+            members[index].volume = chosen
+            if !members[index].mutedForMe {
+                apply(volume: chosen, to: members[index].deviceID)
+            }
+        }
     }
 
     /// How everyone else's loudness is actually controlled — per remote track,
@@ -226,7 +255,16 @@ extension LineManager: RoomDelegate {
         Task { @MainActor in
             let id = participant.identity?.stringValue ?? UUID().uuidString
             guard !members.contains(where: { $0.deviceID == id }) else { return }
-            members.append(Member(deviceID: id, displayName: participant.name ?? "Someone"))
+            // Somebody arriving mid-line must land at the volume you already
+            // chose. Before this, the slider only applied to whoever was
+            // already in the room, so every new joiner came in at full volume
+            // and you had to nudge the control to fix a setting you had
+            // already set.
+            let chosen = Store.shared.prefs.theirVolume
+            members.append(Member(deviceID: id,
+                                  displayName: participant.name ?? "Someone",
+                                  volume: chosen))
+            apply(volume: chosen, to: id)
             Cues.joined(Store.shared.prefs.soundCues)
             Haptics.tap(.light)
         }

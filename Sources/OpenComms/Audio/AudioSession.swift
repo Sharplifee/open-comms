@@ -55,8 +55,36 @@ final class AudioSession {
         session.currentRoute.outputs.first?.portType == .builtInSpeaker
     }
 
+    /// Whether the "clean up background noise" setting is on. Held here rather
+    /// than read from the store so this file keeps no dependency on the app's
+    /// model layer; `LineManager` pushes it in.
+    var cleanUpNoise = true
+
+    /// `.voiceChat` is what actually applies Apple's echo cancellation and
+    /// noise reduction to the microphone. On the speaker it is mandatory —
+    /// there is a real echo path — so the setting cannot turn it off there.
+    /// On headphones there is no echo to cancel, so the setting decides:
+    /// on, and gym noise is filtered before it goes out; off, and the mic is
+    /// left raw, which is cleaner if you are somewhere quiet.
+    ///
+    /// Before this the toggle existed in Settings and nothing read it.
     private func modeForCurrentRoute() -> AVAudioSession.Mode {
-        onSpeaker ? .voiceChat : .default
+        if onSpeaker { return .voiceChat }
+        return cleanUpNoise ? .voiceChat : .default
+    }
+
+    /// Re-apply the category when the noise setting changes mid-line, so the
+    /// switch takes effect on the words you say next rather than the next
+    /// time you open a line.
+    func refreshMode() {
+        guard configured else { return }
+        do {
+            try session.setCategory(.playAndRecord, mode: modeForCurrentRoute(),
+                                    options: [.mixWithOthers, .allowBluetooth,
+                                              .allowBluetoothA2DP, .defaultToSpeaker])
+        } catch {
+            Log.audio.error("refreshMode failed: \(error.localizedDescription)")
+        }
     }
 
     /// Ducking is applied for the length of the speech and then removed. A

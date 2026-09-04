@@ -42,19 +42,18 @@ struct SettingsView: View {
                             .font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.muted)
                     }
                     Slider(value: $store.prefs.sensitivity, in: 0...1).tint(Theme.signal).padding(.top, 12)
+                        .onChange(of: store.prefs.sensitivity) { _, _ in line.applySensitivity() }
                     Text(store.prefs.sensitivityLabel)
                         .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.dim)
                 }
                 .padding(17).cardSurface(18).padding(.horizontal, 22)
 
                 VStack(spacing: 0) {
-                    toggle("Hear yourself", "A little of your own voice back in your ear",
-                           $store.prefs.hearYourself)
-                    Divider().overlay(Theme.line)
                     toggle("Clean up background noise", "Filters gym noise before it goes out",
                            $store.prefs.cleanUpNoise)
                 }
                 .cardSurface().padding(.horizontal, 22).padding(.top, 12)
+                .onChange(of: store.prefs.cleanUpNoise) { _, _ in line.applyNoiseSetting() }
 
                 label("WHO CAN FIND YOU")
                 VStack(spacing: 1) {

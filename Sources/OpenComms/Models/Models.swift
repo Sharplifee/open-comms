@@ -108,7 +108,6 @@ struct Preferences: Codable {
     var visibility: Visibility = .visible
     /// −55 dB to −12 dB. Low means a whisper opens the line.
     var sensitivity: Double = 0.55
-    var hearYourself = true
     var cleanUpNoise = true
     var lowPower = false
     var soundCues = true

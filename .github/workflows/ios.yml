@@ -22,6 +22,22 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      # Both of these run before anything is generated or built, so a fault
+      # they can catch costs seconds instead of a full archive and an upload.
+      #
+      # A setting that moves and changes nothing compiles cleanly and looks
+      # right in review — storing a value IS a use, so only a structural
+      # check finds it. It shipped five times in the previous app, and this
+      # audit found five more on its first run here.
+      - name: Audit for dead settings
+        run: python3 scripts/audit_dead_controls.py
+
+      # PostgREST rejects a whole call that carries a parameter the server
+      # does not declare. Nothing fails at compile time: the Swift is valid,
+      # the function exists, the names are just wrong.
+      - name: Audit RPC signatures
+        run: python3 scripts/audit_rpc_params.py
+
       - name: Generate project
         run: xcodegen generate
 
