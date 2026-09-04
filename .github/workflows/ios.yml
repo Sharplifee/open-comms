@@ -111,4 +111,6 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        run: python3 scripts/verify_upload.py ${{ github.run_number }}
+        run: |
+          pip3 install --quiet pyjwt cryptography
+          python3 scripts/verify_upload.py ${{ github.run_number }}
