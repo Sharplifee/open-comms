@@ -101,6 +101,10 @@ jobs:
         run: |
           mkdir -p ~/private_keys
           echo "$ASC_KEY_P8" > ~/private_keys/AuthKey_$ASC_KEY_ID.p8
+          echo "--- validating before upload"
+          xcrun altool --validate-app -f build/export/OpenComms.ipa -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" --output-format json || true
+          echo "--- uploading"
           xcrun altool --upload-app -f build/export/OpenComms.ipa -t ios \
             --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
 
