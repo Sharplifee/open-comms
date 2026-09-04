@@ -38,6 +38,11 @@ final class LineManager: NSObject, ObservableObject {
     /// begin and end calls and the first person to stop restores the music
     /// while somebody else is still talking.
     private var musicIsYielding = false
+
+    /// The pending un-duck. Held rather than fired immediately so a pause for
+    /// breath does not bounce the music, and cancelled the moment anybody
+    /// speaks again.
+    private var restoreMusic: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
     private var store: Store { Store.shared }
 
@@ -176,6 +181,7 @@ final class LineManager: NSObject, ObservableObject {
     private func teardown() async {
         heartbeat?.cancel(); heartbeat = nil
         detector.stop()
+        restoreMusic?.cancel(); restoreMusic = nil
         musicIsYielding = false
         MusicController.shared.restore()
         await room.disconnect()
@@ -293,12 +299,29 @@ final class LineManager: NSObject, ObservableObject {
             // room for.
             return member.isSelf || !member.mutedForMe
         }
-        guard anyoneTalking != musicIsYielding else { return }
-        musicIsYielding = anyoneTalking
+        // Going quiet is held for a beat; going loud is immediate.
+        //
+        // Ducking works by reconfiguring the audio session, so every
+        // transition is a real cost, and the gap between two sentences is
+        // shorter than the gap between two conversations. Without the hold,
+        // a normal back-and-forth flapped the music up and down between every
+        // breath — the audible version of the same bug that made a permanent
+        // .duckOthers so tempting in the first place.
+        restoreMusic?.cancel(); restoreMusic = nil
+
         if anyoneTalking {
+            guard !musicIsYielding else { return }
+            musicIsYielding = true
             MusicController.shared.speechBegan(store.prefs.music)
-        } else {
-            MusicController.shared.speechEnded(store.prefs.music)
+            return
+        }
+
+        guard musicIsYielding else { return }
+        restoreMusic = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled, let self else { return }
+            self.musicIsYielding = false
+            MusicController.shared.speechEnded(self.store.prefs.music)
         }
     }
 
