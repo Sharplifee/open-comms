@@ -32,6 +32,7 @@ EXPECTED = {
     "join_squad":       {"p_code", "p_device_id", "p_display_name"},
     "leave_squad":      {"p_squad_id", "p_device_id"},
     "match_contacts":   {"p_hashes"},
+    "nearby_devices":   {"p_device_id", "p_lat", "p_lon", "p_radius_m"},
     "register_device":  {"p_device_id", "p_display_name", "p_phone_hash",
                          "p_ghost", "p_identity"},
     "report_device":    {"p_reporter", "p_reported", "p_squad", "p_reason", "p_detail"},

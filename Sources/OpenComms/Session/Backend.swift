@@ -78,6 +78,19 @@ actor Backend {
         ])
     }
 
+    /// Who else is within the chosen radius right now.
+    ///
+    /// Distance and bearing come back already computed — the server never
+    /// hands out anybody's coordinates, because knowing somebody is thirty
+    /// metres away is the feature and knowing exactly where they are standing
+    /// is surveillance.
+    func nearby(lat: Double, lon: Double, radius: Double) async -> [NearbyRow] {
+        (try? await rpc("nearby_devices", [
+            "p_device_id": DeviceIdentity.id,
+            "p_lat": lat, "p_lon": lon, "p_radius_m": radius
+        ])) ?? []
+    }
+
     func updateLocation(lat: Double, lon: Double) async {
         _ = try? await rpcVoid("update_location", [
             "p_device_id": DeviceIdentity.id, "p_lat": lat, "p_lon": lon
@@ -214,6 +227,14 @@ struct ContactMatch: Decodable, Identifiable {
     var id: String { phone_hash }
     let phone_hash: String
     let display_name: String
+}
+
+/// Decoded straight from the RPC, so the field names are the server's.
+struct NearbyRow: Decodable {
+    let device_id: String
+    let display_name: String
+    let metres: Double
+    let bearing: Double
 }
 
 struct BlockedRow: Decodable, Identifiable {

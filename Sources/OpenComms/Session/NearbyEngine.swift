@@ -14,11 +14,17 @@ final class NearbyEngine: NSObject, ObservableObject {
 
     @Published private(set) var people: [NearbyPerson] = []
     @Published private(set) var denied = false
-    @Published var radiusMetres: Double = 152   // 500 ft by default
+    @Published var radiusMetres: Double = 152 {  // 500 ft by default
+        // Widening the range and waiting eight seconds to find out whether it
+        // helped reads as the control not working.
+        didSet { Task { await refresh() } }
+    }
 
     private let manager = CLLocationManager()
     private var lastWrite = Date.distantPast
     private var here: CLLocation?
+    private var poll: Task<Void, Never>?
+    private var lowPower = false
 
     private override init() {
         super.init()
@@ -33,16 +39,51 @@ final class NearbyEngine: NSObject, ObservableObject {
         switch manager.authorizationStatus {
         case .notDetermined: manager.requestWhenInUseAuthorization()
         case .denied, .restricted: denied = true
-        default: manager.startUpdatingLocation()
+        default:
+            manager.startUpdatingLocation()
+            startPolling()
         }
     }
 
-    func stop() { manager.stopUpdatingLocation() }
+    func stop() {
+        manager.stopUpdatingLocation()
+        poll?.cancel(); poll = nil
+        people = []
+    }
+
+    /// Ask the server who else is here.
+    ///
+    /// Writing your own position and never asking about anybody else's is
+    /// what this engine did before: `people` was published, the radar and the
+    /// list read it, and nothing ever filled it. So the radar was always
+    /// empty and the empty state was the only state anyone ever saw.
+    private func startPolling() {
+        guard poll == nil else { return }
+        poll = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refresh()
+                let gap = await self?.lowPower == true ? 20 : 8
+                try? await Task.sleep(for: .seconds(gap))
+            }
+        }
+    }
+
+    func refresh() async {
+        guard let fix = here, Store.shared.prefs.visibility != .hidden else { return }
+        let rows = await Backend.shared.nearby(lat: fix.coordinate.latitude,
+                                               lon: fix.coordinate.longitude,
+                                               radius: radiusMetres)
+        people = rows.map {
+            NearbyPerson(id: $0.device_id, displayName: $0.display_name,
+                         metres: $0.metres, bearing: $0.bearing)
+        }
+    }
 
     /// Low power widens the filter rather than turning location off, because
     /// a radar that silently stops updating is worse than one that updates
     /// slowly — it looks the same but lies.
     func setLowPower(_ on: Bool) {
+        lowPower = on
         manager.distanceFilter = on ? 25 : 5
     }
 
@@ -68,6 +109,7 @@ extension NearbyEngine: CLLocationManagerDelegate {
             self.lastWrite = Date()
             await Backend.shared.updateLocation(lat: fix.coordinate.latitude,
                                                 lon: fix.coordinate.longitude)
+            await self.refresh()
         }
     }
 
@@ -78,6 +120,7 @@ extension NearbyEngine: CLLocationManagerDelegate {
             case .authorizedWhenInUse, .authorizedAlways:
                 self.denied = false
                 manager.startUpdatingLocation()
+                self.startPolling()
             default: break
             }
         }
