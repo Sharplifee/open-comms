@@ -134,9 +134,25 @@ final class LineManager: NSObject, ObservableObject {
     func endForEveryone() async {
         guard let squad else { return }
         await Backend.shared.endLine(squadID: squad.id)
+        // Tell the room before leaving it. Ending the line only closed the
+        // row on the server and tore down the ender's own session — everybody
+        // else stayed connected to a room that no longer existed, talking to
+        // nobody, with an open line on screen and no way to find out. Nothing
+        // else would have told them: the heartbeat only touches rows that are
+        // still live, so it fails silently, and LiveKit has no reason to
+        // disconnect a room whose participants are all still present.
+        try? await room.localParticipant.publish(
+            data: Data(Self.endedMessage.utf8),
+            options: DataPublishOptions(topic: Self.controlTopic, reliable: true)
+        )
         await teardown()
         Cues.closed(store.prefs.soundCues)
     }
+
+    /// Control messages ride their own topic so they can never be confused
+    /// with anything else the room might carry later.
+    static let controlTopic = "opencomms.control"
+    static let endedMessage = "line-ended"
 
     private func teardown() async {
         heartbeat?.cancel(); heartbeat = nil
@@ -285,6 +301,19 @@ extension LineManager: RoomDelegate {
             for index in members.indices where !members[index].isSelf {
                 members[index].isSpeaking = speaking.contains(members[index].deviceID)
             }
+        }
+    }
+
+    nonisolated func room(_ room: Room, participant: RemoteParticipant?,
+                          didReceiveData data: Data, forTopic topic: String,
+                          encryptionType: EncryptionType) {
+        guard topic == LineManager.controlTopic,
+              String(decoding: data, as: UTF8.self) == LineManager.endedMessage else { return }
+        Task { @MainActor in
+            guard phase == .open else { return }
+            await teardown()
+            banner = "The line was closed by whoever opened it"
+            Cues.closed(store.prefs.soundCues)
         }
     }
 
