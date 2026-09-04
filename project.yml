@@ -43,6 +43,13 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # Required whenever the icon comes from an asset catalog, which it
+        # does. Its absence does not fail the build or the upload - altool
+        # reports UPLOAD SUCCEEDED - and then Apple discards the binary
+        # during processing and emails ITMS-90713. That is exactly what
+        # happened to every open comms delivery so far: no build ever
+        # appeared in App Store Connect.
+        CFBundleIconName: AppIcon
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIBackgroundModes:
@@ -68,3 +75,10 @@ targets:
         NSLocalNetworkUsageDescription: >-
           Connects voice directly between phones on the same network, which
           keeps the line quick.
+        # This app never opens a camera, but LiveKit links Apple's camera
+        # capture APIs and Apple scans the binary rather than the code path.
+        # Without the string the upload is rejected ITMS-90683. Learned the
+        # hard way on squad comms.
+        NSCameraUsageDescription: >-
+          open comms does not use the camera. Its audio library links Apple's
+          camera APIs, so this permission is never requested.
