@@ -7,6 +7,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var line: LineManager
     @StateObject private var nearby = NearbyEngine.shared
+    @FocusState private var editingName: Bool
     @State private var blocked: [BlockedRow] = []
     @State private var confirmingWipe = false
 
@@ -104,7 +105,7 @@ struct SettingsView: View {
 
                 label("ABOUT")
                 VStack(spacing: 0) {
-                    row("Your name", store.prefs.displayName)
+                    nameRow
                     Divider().overlay(Theme.line)
                     row("Audio route", AudioSession.shared.routeName)
                     Divider().overlay(Theme.line)
@@ -181,6 +182,45 @@ struct SettingsView: View {
             Toggle("", isOn: value).labelsHidden().tint(Theme.signal)
         }
         .padding(.horizontal, 17).padding(.vertical, 15)
+    }
+
+    /// Your name is the only thing anybody else sees, and it was set once
+    /// during onboarding and then displayed forever as read-only text — a
+    /// typo at signup was permanent. Editing it here writes straight through
+    /// to the server, because a name only this phone knows about is not a
+    /// name change: it is what everybody else still calls you.
+    private var nameRow: some View {
+        HStack {
+            Text("Your name").font(.system(size: 14.5, design: .rounded))
+            Spacer()
+            TextField("Your name", text: $store.prefs.displayName)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(Theme.text)
+                .multilineTextAlignment(.trailing)
+                .submitLabel(.done)
+                .focused($editingName)
+                .onSubmit { pushName() }
+                .accessibilityLabel("Your name, editable")
+        }
+        .padding(.horizontal, 17).padding(.vertical, 14)
+        // Leaving the field is the same intent as pressing done. Somebody who
+        // types a new name and taps elsewhere has still renamed themselves.
+        .onChange(of: editingName) { _, nowEditing in
+            if !nowEditing { pushName() }
+        }
+    }
+
+    private func pushName() {
+        let trimmed = store.prefs.displayName.trimmingCharacters(in: .whitespaces)
+        // An empty name would show up to everybody else as nothing at all, so
+        // it falls back rather than being allowed through.
+        store.prefs.displayName = trimmed.isEmpty ? "Someone" : trimmed
+        let name = store.prefs.displayName
+        Task {
+            await Backend.shared.registerDevice(displayName: name,
+                                                phoneHash: nil,
+                                                hidden: store.prefs.visibility == .hidden)
+        }
     }
 
     private func row(_ title: String, _ value: String) -> some View {
