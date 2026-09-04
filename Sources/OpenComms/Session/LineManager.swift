@@ -174,9 +174,11 @@ final class LineManager: NSObject, ObservableObject {
     /// How everyone else's loudness is actually controlled — per remote track,
     /// not by touching the system volume, which belongs to the music.
     private func apply(volume: Double, to identity: String) {
-        for participant in room.remoteParticipants.values where participant.identity?.stringValue == identity {
+        for participant in room.remoteParticipants.values
+        where participant.identity?.stringValue == identity {
             for publication in participant.audioTracks {
-                (publication.track as? RemoteAudioTrack)?.set(volume: volume)
+                guard let track = publication.track as? RemoteAudioTrack else { continue }
+                track.volume = volume
             }
         }
     }
