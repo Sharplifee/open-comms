@@ -1,0 +1,115 @@
+name: Build and upload to TestFlight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      # A signing identity has to live in a keychain the build can see. The
+      # WWDR intermediate is imported alongside it — without that the identity
+      # exists but is untrusted, and the failure looks like a missing
+      # certificate rather than a missing chain.
+      - name: Prepare signing
+        env:
+          DIST_P12: ${{ secrets.APPLE_DIST_P12 }}
+          DIST_P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
+          PROFILE: ${{ secrets.APPSTORE_PROFILE }}
+        run: |
+          KEYCHAIN=build.keychain
+          security create-keychain -p actions $KEYCHAIN
+          security default-keychain -s $KEYCHAIN
+          security unlock-keychain -p actions $KEYCHAIN
+          security set-keychain-settings -t 3600 -u $KEYCHAIN
+
+          curl -sfL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o wwdr.cer
+          security import wwdr.cer -k $KEYCHAIN -T /usr/bin/codesign || true
+
+          echo "$DIST_P12" | base64 --decode > dist.p12
+          security import dist.p12 -k $KEYCHAIN -P "$DIST_P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions $KEYCHAIN
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/opencomms.mobileprovision
+
+          security find-identity -v -p codesigning $KEYCHAIN
+
+      - name: Inject configuration
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          PLIST=Sources/OpenComms/Support/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :SUPABASE_ANON_KEY string $SUPABASE_ANON_KEY" $PLIST || \
+          /usr/libexec/PlistBuddy -c "Set :SUPABASE_ANON_KEY $SUPABASE_ANON_KEY" $PLIST
+          /usr/libexec/PlistBuddy -c "Add :SENTRY_DSN string $SENTRY_DSN" $PLIST || \
+          /usr/libexec/PlistBuddy -c "Set :SENTRY_DSN $SENTRY_DSN" $PLIST
+
+      - name: Build number from run number
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" \
+            Sources/OpenComms/Support/Info.plist || true
+
+      - name: Archive
+        run: |
+          xcodebuild -project OpenComms.xcodeproj -scheme OpenComms \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath build/OpenComms.xcarchive \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="open comms App Store" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM=XF783932R2 \
+            archive
+
+      - name: Export
+        run: |
+          cat > export.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>XF783932R2</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict><key>com.connor.opencomms</key><string>open comms App Store</string></dict>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/OpenComms.xcarchive \
+            -exportOptionsPlist export.plist -exportPath build/export
+
+      - name: Upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/private_keys
+          echo "$ASC_KEY_P8" > ~/private_keys/AuthKey_$ASC_KEY_ID.p8
+          xcrun altool --upload-app -f build/export/OpenComms.ipa -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
+      # altool exits zero on an upload App Store Connect later rejects, so the
+      # build is confirmed present rather than assumed.
+      - name: Confirm the build actually arrived
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/verify_upload.py ${{ github.run_number }}

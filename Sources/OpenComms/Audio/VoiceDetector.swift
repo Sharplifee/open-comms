@@ -1,0 +1,81 @@
+import AVFoundation
+import Combine
+
+/// Decides when you are talking, so nobody has to hold a button.
+///
+/// The envelope matters more than the threshold. A bare level test opens and
+/// closes the line on every syllable, which sounds like a stutter to everyone
+/// else. So: a short attack so the first word is not clipped, a hold that
+/// carries the gaps inside a sentence, and a longer release so the line does
+/// not slam shut on a trailing word.
+@MainActor
+final class VoiceDetector: ObservableObject {
+    @Published private(set) var level: Double = 0      // 0...1 for the meter
+    @Published private(set) var speaking = false
+
+    private let engine = AVAudioEngine()
+    private var holdUntil = Date.distantPast
+    private var running = false
+
+    private let attack: TimeInterval = 0.06
+    private let hold: TimeInterval = 0.35
+    private let release: TimeInterval = 0.45
+    private var aboveSince: Date?
+
+    var threshold: Double = -32          // dB, driven by the sensitivity slider
+    var onChange: ((Bool) -> Void)?
+
+    /// Runs before anybody joins a line, so the meter is honest on the
+    /// settings screen and you can see how loud you need to be.
+    func start() {
+        guard !running else { return }
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            guard let channel = buffer.floatChannelData?[0] else { return }
+            let frames = Int(buffer.frameLength)
+            var sum: Float = 0
+            for i in 0..<frames { sum += channel[i] * channel[i] }
+            let rms = sqrt(sum / Float(max(frames, 1)))
+            let db = Double(20 * log10(max(rms, 0.000_001)))
+            Task { @MainActor in self?.consume(db) }
+        }
+        do {
+            try engine.start()
+            running = true
+        } catch {
+            Log.audio.error("voice detector failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    func stop() {
+        guard running else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        running = false
+        speaking = false
+        level = 0
+    }
+
+    private func consume(_ db: Double) {
+        // −55 is close to silence, −12 is a shout. Everything between maps
+        // onto the meter.
+        level = min(max((db + 55) / 43, 0), 1)
+
+        let now = Date()
+        if db > threshold {
+            if aboveSince == nil { aboveSince = now }
+            holdUntil = now.addingTimeInterval(hold)
+            if !speaking, now.timeIntervalSince(aboveSince ?? now) >= attack {
+                speaking = true
+                onChange?(true)
+            }
+        } else {
+            aboveSince = nil
+            if speaking, now > holdUntil.addingTimeInterval(release) {
+                speaking = false
+                onChange?(false)
+            }
+        }
+    }
+}
