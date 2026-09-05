@@ -19,6 +19,13 @@ actor Backend {
         let squad: Squad?
     }
 
+    struct OpenResult {
+        let outcome: JoinOutcome
+        let retryAfter: Int
+        let squad: Squad?
+        let token: String?
+    }
+
     // MARK: - Lines
 
     func createSquad(code: String, name: String, displayName: String) async throws -> JoinResult {
@@ -134,6 +141,49 @@ actor Backend {
     }
 
     // MARK: - LiveKit
+
+    /// Everything needed to be on a line, in one request.
+    ///
+    /// This used to be two: create or join, wait, then mint a token, wait.
+    /// Two round trips to another region is most of a second before LiveKit
+    /// has even been dialled, and the only thing the phone did with the first
+    /// answer was hand the id straight back. The edge function does both and
+    /// returns the squad and the token together.
+    func openLine(code: String, creating: Bool, name: String,
+                  displayName: String) async throws -> OpenResult {
+        var request = URLRequest(url: URL(string: "\(Config.supabaseURL)/functions/v1/open-line")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(Config.supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "code": code, "deviceId": DeviceIdentity.id, "displayName": displayName,
+            "create": creating, "name": name
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw BackendError.tokenRefused
+        }
+        struct Body: Decodable {
+            let outcome: String
+            let retryAfter: Int?
+            let squadId: String?
+            let squadName: String?
+            let joinCode: String?
+            let isCreator: Bool?
+            let token: String?
+        }
+        let body = try JSONDecoder().decode(Body.self, from: data)
+        let outcome = JoinOutcome(rawValue: body.outcome) ?? .invalid
+        guard outcome == .ok, let id = body.squadId, let token = body.token else {
+            return OpenResult(outcome: outcome, retryAfter: body.retryAfter ?? 0, squad: nil, token: nil)
+        }
+        return OpenResult(outcome: .ok, retryAfter: 0,
+                          squad: Squad(id: id, name: body.squadName ?? name,
+                                       code: body.joinCode ?? code, isHost: body.isCreator ?? false),
+                          token: token)
+    }
 
     /// The token is minted server side and the API secret never ships inside
     /// the app, where anybody could pull it out of the binary.

@@ -12,6 +12,9 @@ final class LineManager: NSObject, ObservableObject {
 
     enum Phase: Equatable {
         case closed
+        /// Kept for the reconnect path only. Opening a line no longer passes
+        /// through it: the session appears immediately and `connecting`
+        /// reports the handshake instead.
         case opening
         case open
         case failed(String)
@@ -29,6 +32,11 @@ final class LineManager: NSObject, ObservableObject {
     /// the middle of a heavy set you will not remember to turn it back on.
     @Published private(set) var mutedEveryone = false
     @Published private(set) var focusUntil: Date?
+
+    /// The line is on screen and usable; the server round trip and the LiveKit
+    /// dial are still finishing. Shown as a thin line at the top of the
+    /// session, never as something covering the screen.
+    @Published private(set) var connecting = false
 
     private let room = Room()
     /// Exposed so the meter can observe it directly. Reading `level` through
@@ -86,60 +94,105 @@ final class LineManager: NSObject, ObservableObject {
     // MARK: - Opening and joining
 
     func open(code: String, name: String) async {
-        await connect { [self] in
-            try await Backend.shared.createSquad(code: code, name: name,
-                                                 displayName: store.prefs.displayName)
-        }
+        await connect(code: code, creating: true, name: name)
     }
 
     func join(code: String) async {
-        await connect { [self] in
-            try await Backend.shared.joinSquad(code: code, displayName: store.prefs.displayName)
-        }
+        await connect(code: code, creating: false, name: "Squad")
     }
 
-    private func connect(_ work: () async throws -> Backend.JoinResult) async {
+    /// Open the line NOW, and do the network work behind it.
+    ///
+    /// This used to put a modal spinner over the whole app and hold it there
+    /// for two round trips and a LiveKit dial. Nothing about that wait was
+    /// information: the line either opens or it does not, and a person staring
+    /// at "opening the line" cannot do anything with the sentence. So the
+    /// session screen appears immediately with the code already on it, the
+    /// work runs underneath, and the only thing that ever interrupts is an
+    /// actual refusal.
+    ///
+    /// The optimism is cheap to unwind. If the server says no, the screen
+    /// closes and says why; nothing was published to anybody in between.
+    private func connect(code: String, creating: Bool, name: String) async {
         guard Reachability.shared.online else {
             phase = .failed("You're offline. The line needs a connection.")
             return
         }
-        phase = .opening
+
+        // On screen instantly. `connecting` is what the session view uses to
+        // show a thin line at the top rather than a wall in the middle.
+        squad = Squad(id: "", name: name, code: code, isHost: creating)
+        members = [Member(deviceID: DeviceIdentity.id,
+                          displayName: store.prefs.displayName.isEmpty ? "You" : store.prefs.displayName,
+                          isSelf: true)]
+        openedAt = Date()
+        phase = .open
+        connecting = true
+        Haptics.tap()
+
+        // The microphone meter and the audio session do not need the server,
+        // so start them while the request is still in flight.
+        applyNoiseSetting()
+        applyMusicPolicy()
+        AudioSession.shared.configure()
+        detector.threshold = store.prefs.thresholdDB
+        detector.selfMonitorGain = Float(store.prefs.selfMonitor)
+        detector.start()
+
         do {
-            let result = try await work()
-            switch result.outcome {
-            case .ok:
-                guard let squad = result.squad else {
-                    phase = .failed("The line opened but came back empty. Try again.")
-                    return
-                }
-                try await enterRoom(squad)
-            case .invalid:
-                phase = .failed("Codes are three digits.")
-            case .taken:
-                phase = .failed("That code is somebody else's line right now. Pick another.")
-            case .notFound:
-                phase = .failed("No line on \(squad?.code ?? "that code") right now.")
-            case .expired:
-                phase = .failed("That line has already ended.")
-            case .full:
-                phase = .failed("That line is full.")
-            case .rateLimited:
-                let seconds = max(result.retryAfter, 1)
-                phase = .failed("Too many tries. Give it \(seconds) seconds.")
-            case .blocked:
-                // Deliberately vague about who and in which direction. Naming
-                // the person tells a blocked stranger exactly who blocked them,
-                // and tells anybody who blocked somebody that the person is
-                // standing on that line right now.
-                phase = .failed("You can't join that line.")
+            let result = try await Backend.shared.openLine(
+                code: code, creating: creating, name: name,
+                displayName: store.prefs.displayName)
+
+            guard result.outcome == .ok, let opened = result.squad, let token = result.token else {
+                await abandon(refusal(result.outcome, retryAfter: result.retryAfter, code: code))
+                return
             }
+            squad = opened
+            try await room.connect(url: Config.livekitURL, token: token)
+            try await room.localParticipant.setMicrophone(enabled: true)
+
+            connecting = false
+            micLive = true
+            store.remember(opened)
+            blockedDevices = Set(await Backend.shared.blocked().map(\.device_id))
+            applyChosenVolume()
+            Cues.opened(store.prefs.soundCues)
+            startHeartbeat(opened.id)
         } catch {
-            // A timeout is the common case here, and it must say something a
-            // person can act on rather than leaving them watching a spinner.
-            phase = .failed("Couldn't reach the line. Nothing was lost — try again.")
+            await abandon("Couldn't reach the line. Nothing was lost — try again.")
         }
     }
 
+    /// Roll the optimistic session back and say why.
+    private func abandon(_ why: String) async {
+        connecting = false
+        detector.stop()
+        squad = nil
+        members = []
+        openedAt = nil
+        micLive = false
+        phase = .failed(why)
+    }
+
+    private func refusal(_ outcome: JoinOutcome, retryAfter: Int, code: String) -> String {
+        switch outcome {
+        case .ok: return ""
+        case .invalid: return "Codes are three digits."
+        case .taken: return "That code is somebody else's line right now. Pick another."
+        case .notFound: return "No line on \(code) right now."
+        case .expired: return "That line has already ended."
+        case .full: return "That line is full."
+        case .rateLimited: return "Too many tries. Give it \(max(retryAfter, 1)) seconds."
+        // Deliberately vague about who and in which direction. Naming the
+        // person tells a blocked stranger exactly who blocked them, and tells
+        // anybody who blocked somebody that the person is on that line now.
+        case .blocked: return "You can't join that line."
+        }
+    }
+
+    /// Used by the reconnect path, which already has a squad and only needs
+    /// the room back.
     private func enterRoom(_ squad: Squad) async throws {
         let token = try await Backend.shared.livekitToken(squadID: squad.id,
                                                           displayName: store.prefs.displayName)
@@ -210,7 +263,7 @@ final class LineManager: NSObject, ObservableObject {
         MusicController.shared.restore()
         await room.disconnect()
         AudioSession.shared.deactivate()
-        squad = nil; members = []; openedAt = nil; micLive = false
+        squad = nil; members = []; openedAt = nil; micLive = false; connecting = false
         phase = .closed
     }
 

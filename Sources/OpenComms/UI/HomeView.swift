@@ -56,7 +56,6 @@ struct HomeView: View {
         } message: {
             Text("They're removed from this line, can't hear you or find you again, and the report goes to review.")
         }
-        .overlay { if case .opening = line.phase { ConnectingOverlay() } }
         .overlay { if line.focusSecondsLeft > 0 { FocusOverlay() } }
         .alert("Couldn't open the line", isPresented: failureBinding) {
             Button("OK") { line.dismissFailure() }
@@ -195,6 +194,19 @@ struct HomeView: View {
                           subtitle: "Live · \(line.members.count) members · \(line.elapsed)",
                           people: nearby.people, radiusIndex: $store.prefs.radiusIndex, showRange: $showRange)
                     .padding(.horizontal, 20)
+            }
+
+            if line.connecting {
+                // A hairline, not a wall. The line is already usable — this
+                // only says the last of the handshake is still landing.
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.mini).tint(Theme.signal)
+                    Text("Connecting audio").font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.muted)
+                    Spacer()
+                }
+                .padding(.horizontal, 22).padding(.bottom, 8)
+                .transition(.opacity)
             }
 
             if let squad = line.squad {

@@ -189,21 +189,3 @@ struct RadarStrip: View {
     }
 }
 
-struct ConnectingOverlay: View {
-    var body: some View {
-        ZStack {
-            Theme.base.opacity(0.78).ignoresSafeArea()
-            VStack(spacing: 14) {
-                ProgressView().tint(Theme.signal)
-                Text("Opening the line…").font(.system(size: 16.5, weight: .bold, design: .rounded))
-                Text("If this takes more than ten seconds it gives up rather than leaving you here.")
-                    .font(.system(size: 13, design: .rounded))
-                    .foregroundStyle(Theme.muted)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(26)
-            .frame(maxWidth: 300)
-            .cardSurface(22)
-        }
-    }
-}
