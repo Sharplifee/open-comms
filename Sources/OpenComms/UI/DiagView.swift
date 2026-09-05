@@ -100,7 +100,7 @@ struct DiagView: View {
 
     private func copy() {
         UIPasteboard.general.string = """
-        open comms \(version)
+        OpenComms \(version)
         route: \(AudioSession.shared.routeName)
         mic: \(line.micLive ? "live" : "muted")
         location: \(nearby.denied ? "denied" : "granted")

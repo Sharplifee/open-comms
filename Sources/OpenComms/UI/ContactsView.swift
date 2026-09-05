@@ -74,7 +74,7 @@ struct ContactsView: View {
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.line, lineWidth: 1))
             .padding(.horizontal, 20)
 
-            Text("ON SQUAD COMMS — \(found.count)")
+            Text("ON OPENCOMMS — \(found.count)")
                 .font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(Theme.muted)
                 .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 8)
 

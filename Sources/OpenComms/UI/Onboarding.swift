@@ -147,7 +147,7 @@ struct NameEntryView: View {
 
             Spacer()
 
-            Button("Start using open comms") {
+            Button("Start using OpenComms") {
                 store.prefs.displayName = draft.trimmingCharacters(in: .whitespaces)
                 Task { await Backend.shared.registerDevice(displayName: store.prefs.displayName,
                                                            phoneHash: nil,

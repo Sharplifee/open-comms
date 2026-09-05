@@ -39,7 +39,7 @@ targets:
     info:
       path: Sources/OpenComms/Support/Info.plist
       properties:
-        CFBundleDisplayName: squad comms
+        CFBundleDisplayName: OpenComms
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -65,7 +65,7 @@ targets:
           Shows who is nearby so you can open a line with one tap. Only while
           you have the app open, and you can hide any time.
         NSContactsUsageDescription: >-
-          Finds which of your contacts already use squad comms. Numbers are
+          Finds which of your contacts already use OpenComms. Numbers are
           scrambled on this phone before anything is sent.
         NSBluetoothAlwaysUsageDescription: >-
           Connects your AirPods or other Bluetooth headphones to the line.

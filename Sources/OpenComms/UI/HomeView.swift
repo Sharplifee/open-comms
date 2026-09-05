@@ -81,7 +81,7 @@ struct HomeView: View {
 
     private var header: some View {
         HStack {
-            Text("squad comms").font(.system(size: 26, weight: .bold, design: .rounded))
+            Text("OpenComms").font(.system(size: 26, weight: .bold, design: .rounded))
             Spacer()
             HStack(spacing: 8) {
                 Button(store.prefs.lightTheme ? "Light" : "Dark") {
@@ -149,7 +149,7 @@ struct HomeView: View {
             if nearby.denied {
                 EmptyView()
             } else if nearby.people.isEmpty {
-                Text(store.prefs.visibility == .hidden ? "You're hidden — nobody can see you" : "Nobody nearby with squad comms")
+                Text(store.prefs.visibility == .hidden ? "You're hidden — nobody can see you" : "Nobody nearby with OpenComms")
                     .font(.system(size: 14, design: .rounded)).foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity).padding(.top, 22)
                 Text(store.prefs.visibility == .hidden ? "Turn ghost mode off to appear again" : "Adjust range or check back later")
@@ -208,7 +208,7 @@ struct HomeView: View {
                         copied = true; Haptics.tap(.light)
                         Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
                     } label: { iconButton(copied ? "checkmark" : "doc.on.doc") }
-                    ShareLink(item: "Join my line on squad comms — code \(squad.code)") {
+                    ShareLink(item: "Join my line on OpenComms — code \(squad.code)") {
                         iconButton("square.and.arrow.up")
                     }
                     Spacer()
