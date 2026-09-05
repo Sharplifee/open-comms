@@ -130,7 +130,7 @@ struct HomeView: View {
                     .padding(.horizontal, 20)
             }
 
-            MicCard(level: line.level, live: line.micLive, speaking: line.isSpeakingLocally,
+            MicCard(detector: line.detector, live: line.micLive, onLine: false,
                     sensitivity: $store.prefs.sensitivity) { line.setMic(!line.micLive) }
                 .padding(.horizontal, 20).padding(.top, 14)
 
@@ -238,7 +238,7 @@ struct HomeView: View {
             .cardSurface()
             .padding(.horizontal, 20).padding(.top, 14)
 
-            MicCard(level: line.level, live: line.micLive, speaking: line.isSpeakingLocally,
+            MicCard(detector: line.detector, live: line.micLive, onLine: true,
                     sensitivity: $store.prefs.sensitivity) { line.setMic(!line.micLive) }
                 .padding(.horizontal, 20).padding(.top, 14)
 

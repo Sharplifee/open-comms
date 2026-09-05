@@ -14,7 +14,6 @@ struct RadarCard: View {
     @Binding var showRange: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var sweep = 0.0
 
     private var radius: Double { Preferences.ranges[min(max(radiusIndex, 0), 8)].metres }
     private var label: String { Preferences.ranges[min(max(radiusIndex, 0), 8)].label }
@@ -67,6 +66,15 @@ struct RadarCard: View {
             }
 
             ZStack {
+                // Canvas does not interpolate an animated @State — it just
+                // repaints when the value lands, so `withAnimation` on a sweep
+                // angle drew one frame and stopped. A TimelineView hands the
+                // canvas a fresh timestamp every frame; the angle is computed
+                // from the clock, so it keeps moving for as long as it is on
+                // screen and stops costing anything the moment it is not.
+                TimelineView(.animation(paused: reduceMotion)) { timeline in
+                let sweep = reduceMotion ? 0.0
+                    : (timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period) * 360
                 Canvas { context, size in
                     let centre = CGPoint(x: size.width / 2, y: size.height / 2)
                     let maxR = min(size.width, size.height) / 2 - 12
@@ -111,6 +119,7 @@ struct RadarCard: View {
                     context.draw(Text("YOU").font(.system(size: 6, weight: .bold, design: .rounded))
                                     .foregroundColor(Theme.base), at: centre)
                 }
+                }
 
                 GeometryReader { geo in
                     let centre = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
@@ -148,34 +157,37 @@ struct RadarCard: View {
             .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 14)
         }
         .cardSurface(24)
-        .onAppear { startSweep() }
-        .onChange(of: radiusIndex) { _, _ in startSweep() }
-    }
-
-    private func startSweep() {
-        guard !reduceMotion else { return }
-        sweep = 0
-        withAnimation(.linear(duration: period).repeatForever(autoreverses: false)) { sweep = 360 }
     }
 }
 
 // MARK: - Mic card
 
-/// The mic card from the design: the round mic button, the sensitivity pill,
-/// the Whisper–Shout slider, a 26-bar meter with the yellow threshold marker
-/// you can drag, and the transmitting row underneath.
+/// The mic card. The meter is the point of it: a live decibel reading on the
+/// same −55…−12 dB axis the threshold uses, with the threshold drawn ON that
+/// axis as a marker you drag. You watch where your voice lands, you set the
+/// line where you want it, and the moment the reading crosses the marker the
+/// line opens. Anyone can look at it and understand how loud they need to be.
+///
+/// It observes the detector directly, because the reading changes twenty times
+/// a second and nothing else on the screen needs to repaint for it.
 struct MicCard: View {
-    let level: Double
+    @ObservedObject var detector: VoiceDetector
+    /// Whether the mic is actually feeding a line. The meter reads whenever
+    /// the detector is listening, line or no line; this only decides whether
+    /// crossing the marker would transmit anything.
     let live: Bool
-    let speaking: Bool
+    let onLine: Bool
     @Binding var sensitivity: Double
     let onToggleMic: () -> Void
 
-    private var db: Int { Int((-55 + sensitivity * 43).rounded()) }
+    private static let floor = -55.0, ceiling = -12.0, span = 43.0
+    private var thresholdDB: Double { Self.floor + sensitivity * Self.span }
     private var mode: String {
         let names = ["Whisper","Soft","Low","Medium","Normal","Elevated","Loud","Very Loud","Shout"]
         return names[min(8, Int(sensitivity * 9))]
     }
+    private var hasSignal: Bool { detector.isListening }
+    private var crossing: Bool { hasSignal && detector.decibels >= thresholdDB }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -191,61 +203,92 @@ struct MicCard: View {
                 .accessibilityLabel(live ? "Microphone live. Tap to mute." : "Microphone muted. Tap to unmute.")
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(live ? "Microphone" : "Microphone muted")
+                    Text(!onLine ? "Listening" : live ? "Microphone" : "Microphone muted")
                         .font(.system(size: 17, weight: .bold, design: .rounded))
-                    Text("Sensitivity: \(db) dB · \(mode)")
+                    Text("Opens at \(Int(thresholdDB.rounded())) dB · \(mode)")
                         .font(.system(size: 12.5, design: .rounded)).foregroundStyle(Theme.muted)
                 }
                 Spacer()
-                Text("\(db) dB")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Theme.raised, in: Capsule())
+                // The live number. Big enough to read from a bench.
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(hasSignal ? "\(Int(detector.decibels.rounded()))" : "—")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(crossing ? Theme.signal : Theme.text)
+                        .contentTransition(.numericText())
+                    Text("dB now").font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.muted)
+                }
             }
 
-            Slider(value: $sensitivity, in: 0...1).tint(Theme.line).padding(.top, 16)
-            HStack {
-                Text("Whisper"); Spacer(); Text(mode); Spacer(); Text("Shout")
-            }
-            .font(.system(size: 11, design: .rounded)).foregroundStyle(Theme.muted)
-            .padding(.top, 14).padding(.bottom, 8)
-
+            // The meter and the threshold on one axis.
             GeometryReader { geo in
-                let bars = 26
-                let thr = Int((sensitivity * Double(bars - 1)).rounded())
+                let width = geo.size.width
+                let fill = hasSignal ? (detector.decibels - Self.floor) / Self.span : 0
+                let marker = sensitivity
                 ZStack(alignment: .leading) {
-                    HStack(alignment: .center, spacing: 4) {
-                        ForEach(0..<bars, id: \.self) { i in
-                            let amp = live ? abs(sin(Double(i) * 0.9 + level * 8)) * level : 0
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(live && i <= thr ? Theme.signal : Theme.line)
-                                .frame(height: 6 + amp * 26)
+                    // scale
+                    RoundedRectangle(cornerRadius: 6).fill(Theme.raised).frame(height: 22)
+                    // the part of the scale above the threshold — what "open" means
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Theme.signal.opacity(0.10))
+                        .frame(width: max(0, width * (1 - marker)), height: 22)
+                        .offset(x: width * marker)
+                    // live level
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(crossing ? Theme.signal : Theme.muted)
+                        .frame(width: max(0, width * fill), height: 22)
+                        .animation(.linear(duration: 0.05), value: fill)
+                    // segment ticks every 5 dB so the scale is readable
+                    HStack(spacing: 0) {
+                        ForEach(0..<9, id: \.self) { i in
+                            Rectangle().fill(Theme.base.opacity(0.55)).frame(width: 1, height: 22)
+                            if i < 8 { Spacer() }
                         }
                     }
-                    .frame(height: 44)
+                    // the threshold marker you drag
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Theme.signal)
-                        .frame(width: 5, height: 44)
-                        .offset(x: geo.size.width * Double(thr) / Double(bars - 1) - 2.5)
+                        .frame(width: 5, height: 36)
+                        .shadow(color: Theme.signal.opacity(0.5), radius: 4)
+                        .offset(x: width * marker - 2.5, y: 0)
                 }
+                .frame(height: 36)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                    sensitivity = min(1, max(0, value.location.x / geo.size.width))
+                    sensitivity = min(1, max(0, value.location.x / width))
                 })
             }
-            .frame(height: 44)
-            .accessibilityHidden(true)
+            .frame(height: 36)
+            .padding(.top, 16)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Level \(Int(detector.decibels.rounded())) decibels. Line opens at \(Int(thresholdDB.rounded())).")
+
+            HStack {
+                Text("−55").font(.system(size: 9, design: .monospaced))
+                Spacer()
+                Text("Whisper").font(.system(size: 11, design: .rounded))
+                Spacer()
+                Text("Shout").font(.system(size: 11, design: .rounded))
+                Spacer()
+                Text("−12").font(.system(size: 9, design: .monospaced))
+            }
+            .foregroundStyle(Theme.muted)
+            .padding(.top, 6)
+
+            Slider(value: $sensitivity, in: 0...1).tint(Theme.line).padding(.top, 8)
 
             HStack {
                 HStack(spacing: 7) {
-                    Circle().fill(live && speaking ? Theme.signal : Theme.muted).frame(width: 7, height: 7)
-                    Text(live && speaking ? "Transmitting" : "Not transmitting")
-                        .foregroundStyle(live && speaking ? Theme.signal : Theme.muted)
+                    Circle().fill(live && detector.speaking ? Theme.signal : Theme.muted).frame(width: 7, height: 7)
+                    Text(live && detector.speaking ? "Transmitting" : "Not transmitting")
+                        .foregroundStyle(live && detector.speaking ? Theme.signal : Theme.muted)
                 }
                 Spacer()
-                Text(live && speaking ? "WOULD TRANSMIT" : "SPEAK LOUDER")
+                Text(!hasSignal ? "NO SIGNAL" : !onLine ? (crossing ? "WOULD TRANSMIT" : "SPEAK LOUDER")
+                     : !live ? "MIC MUTED" : crossing ? "ABOVE THE LINE" : "SPEAK LOUDER")
                     .font(.system(size: 11, weight: .bold, design: .rounded)).kerning(1)
-                    .foregroundStyle(Theme.muted)
+                    .foregroundStyle(crossing ? Theme.signal : Theme.muted)
             }
             .font(.system(size: 12.5, design: .rounded))
             .padding(.top, 12)

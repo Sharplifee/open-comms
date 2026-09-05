@@ -31,7 +31,12 @@ final class LineManager: NSObject, ObservableObject {
     @Published private(set) var focusUntil: Date?
 
     private let room = Room()
-    private let detector = VoiceDetector()
+    /// Exposed so the meter can observe it directly. Reading `level` through
+    /// this manager was a computed pass-through, and a computed property does
+    /// not publish — the detector updated twenty times a second and the view
+    /// never heard about it, so the meter sat still. Observing the detector
+    /// itself also keeps those updates from repainting the whole screen.
+    let detector = VoiceDetector()
 
     /// Everyone this device has blocked, loaded when a line opens. Held here
     /// so a block survives leaving and coming back — previously it lived only
@@ -61,6 +66,7 @@ final class LineManager: NSObject, ObservableObject {
 
     var talker: Member? { members.first { $0.isSpeaking && !$0.isSelf && !$0.mutedForMe } }
     var level: Double { detector.level }
+    var decibels: Double { detector.decibels }
     var isSpeakingLocally: Bool { detector.speaking }
 
     /// Runs the meter before any line exists, so the mic card on Home is

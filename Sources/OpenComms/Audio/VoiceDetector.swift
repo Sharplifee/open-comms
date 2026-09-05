@@ -11,7 +11,15 @@ import Combine
 @MainActor
 final class VoiceDetector: ObservableObject {
     @Published private(set) var level: Double = 0      // 0...1 for the meter
+    /// The live reading in decibels, on the same −55…−12 scale the threshold
+    /// uses, so the meter and the marker can be drawn on one axis and a
+    /// person can see exactly how far they are from opening the line.
+    @Published private(set) var decibels: Double = -55
     @Published private(set) var speaking = false
+    /// Whether the meter has a signal at all. True whenever the engine is
+    /// running — on a line or just listening on the Home screen — so the
+    /// reading is shown before anybody has opened anything.
+    @Published private(set) var isListening = false
 
     private let engine = AVAudioEngine()
     private var holdUntil = Date.distantPast
@@ -65,6 +73,7 @@ final class VoiceDetector: ObservableObject {
         do {
             try engine.start()
             running = true
+            isListening = true
         } catch {
             Log.audio.error("voice detector failed to start: \(error.localizedDescription)")
         }
@@ -75,14 +84,17 @@ final class VoiceDetector: ObservableObject {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
+        isListening = false
         speaking = false
         level = 0
+        decibels = -55
     }
 
     private func consume(_ db: Double) {
         // −55 is close to silence, −12 is a shout. Everything between maps
         // onto the meter.
         level = min(max((db + 55) / 43, 0), 1)
+        decibels = min(max(db, -55), -12)
 
         let now = Date()
         if db > threshold {
