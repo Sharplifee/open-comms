@@ -60,7 +60,7 @@ targets:
         # Six strings, and not one more. App Review rejects permissions the
         # app does not actually exercise, so this list is a ceiling.
         NSMicrophoneUsageDescription: >-
-          open comms is a voice line. The microphone is how your squad hears you.
+          OpenComms is a voice line. The microphone is how your squad hears you.
         NSLocationWhenInUseUsageDescription: >-
           Shows who is nearby so you can open a line with one tap. Only while
           you have the app open, and you can hide any time.
@@ -80,5 +80,5 @@ targets:
         # Without the string the upload is rejected ITMS-90683. Learned the
         # hard way on squad comms.
         NSCameraUsageDescription: >-
-          open comms does not use the camera. Its audio library links Apple's
+          OpenComms does not use the camera. Its audio library links Apple's
           camera APIs, so this permission is never requested.
