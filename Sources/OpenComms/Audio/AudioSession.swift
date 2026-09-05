@@ -55,22 +55,18 @@ final class AudioSession {
         session.currentRoute.outputs.first?.portType == .builtInSpeaker
     }
 
-    /// Whether the "clean up background noise" setting is on. Held here rather
-    /// than read from the store so this file keeps no dependency on the app's
-    /// model layer; `LineManager` pushes it in.
-    var cleanUpNoise = true
-
-    /// `.voiceChat` is what actually applies Apple's echo cancellation and
-    /// noise reduction to the microphone. On the speaker it is mandatory —
-    /// there is a real echo path — so the setting cannot turn it off there.
-    /// On headphones there is no echo to cancel, so the setting decides:
-    /// on, and gym noise is filtered before it goes out; off, and the mic is
-    /// left raw, which is cleaner if you are somewhere quiet.
+    /// `.voiceChat` puts the whole session through Apple's voice processing.
+    /// On the speaker that is mandatory — there is a real echo path between
+    /// the speaker and the mic — and it is worth what it costs.
     ///
-    /// Before this the toggle existed in Settings and nothing read it.
+    /// On headphones there is no echo to cancel and it costs plenty: voice
+    /// processing reshapes everything the session touches, which is exactly
+    /// how the old app ended up with music that sounded thin and boxy the
+    /// whole time a line was open. Headphones stay `.default` and the music
+    /// stays untouched, no matter what the noise setting says. Noise cleanup
+    /// happens on the microphone instead, where it belongs.
     private func modeForCurrentRoute() -> AVAudioSession.Mode {
-        if onSpeaker { return .voiceChat }
-        return cleanUpNoise ? .voiceChat : .default
+        onSpeaker ? .voiceChat : .default
     }
 
     /// Re-apply the category when the noise setting changes mid-line, so the
@@ -87,24 +83,20 @@ final class AudioSession {
         }
     }
 
-    /// Ducking is applied for the length of the speech and then removed. A
-    /// failure to remove it is worse than never applying it, so restore runs
-    /// on interruption and on route change too.
-    func duck(_ on: Bool) {
-        do {
-            if on {
-                try session.setCategory(.playAndRecord, mode: modeForCurrentRoute(),
-                                        options: [.mixWithOthers, .allowBluetooth,
-                                                  .allowBluetoothA2DP, .defaultToSpeaker, .duckOthers])
-            } else {
-                try session.setCategory(.playAndRecord, mode: modeForCurrentRoute(),
-                                        options: [.mixWithOthers, .allowBluetooth,
-                                                  .allowBluetoothA2DP, .defaultToSpeaker])
-            }
-        } catch {
-            Log.audio.error("duck \(on) failed: \(error.localizedDescription)")
-        }
-    }
+    // Ducking is NOT done here, and that is the most important fact in this
+    // file. It used to flip `.duckOthers` on and off by reconfiguring the
+    // category at the edges of every sentence. Reconfiguring a live session
+    // interrupts the audio graph other apps play through, so a podcast got a
+    // small hitch at the start and end of every utterance and a long
+    // conversation produced dozens of them — the same family as the old bug
+    // that left `.duckOthers` on permanently and quietly degraded everything.
+    //
+    // Ducking now runs through Apple's voice processing, driven by LiveKit in
+    // `LineManager.applyMusicPolicy`. The system lowers other audio while a
+    // voice is present and lifts it when nobody is talking, with no category
+    // changes at all. That is what FaceTime and SharePlay do, and it is why
+    // they never leave your music sounding wrong.
+
 
     private func observe() {
         let centre = NotificationCenter.default
@@ -115,9 +107,10 @@ final class AudioSession {
                   let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
             switch type {
             case .began:
-                // A phone call takes the mic. Drop ducking so the person's
-                // music is not left quiet after the call ends.
-                self.duck(false)
+                // A phone call takes the mic. Nothing to undo here any more —
+                // the system owns ducking, so it lifts on its own — but the
+                // session must be rebuilt when the call ends.
+                break
             case .ended:
                 self.configured = false
                 self.configure()

@@ -24,6 +24,7 @@ struct SettingsView: View {
                     ForEach(MusicBehaviour.allCases, id: \.self) { option in
                         choice(option.title, option.detail, store.prefs.music == option) {
                             store.prefs.music = option
+                            line.applyMusicPolicy()
                         }
                     }
                 }

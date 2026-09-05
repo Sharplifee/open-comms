@@ -24,7 +24,9 @@ final class MusicController {
     func speechBegan(_ behaviour: MusicBehaviour) {
         switch behaviour {
         case .turnDown:
-            AudioSession.shared.duck(true)
+            // Nothing to do. The system ducks other audio for as long as a
+            // voice is present, so there is no edge for this app to act on.
+            break
         case .pauseAndRewind:
             if player.playbackState == .playing {
                 player.pause()
@@ -38,7 +40,7 @@ final class MusicController {
     func speechEnded(_ behaviour: MusicBehaviour) {
         switch behaviour {
         case .turnDown:
-            AudioSession.shared.duck(false)
+            break
         case .pauseAndRewind:
             guard pausedByUs else { return }
             pausedByUs = false
@@ -60,7 +62,6 @@ final class MusicController {
     /// Belt and braces for the moment a line closes: nothing should be left
     /// ducked or paused by us.
     func restore() {
-        AudioSession.shared.duck(false)
         if pausedByUs {
             pausedByUs = false
             player.currentPlaybackTime = max(0, player.currentPlaybackTime - reentryLead)

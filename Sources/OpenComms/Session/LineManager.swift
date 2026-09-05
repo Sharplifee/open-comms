@@ -131,7 +131,8 @@ final class LineManager: NSObject, ObservableObject {
     private func enterRoom(_ squad: Squad) async throws {
         let token = try await Backend.shared.livekitToken(squadID: squad.id,
                                                           displayName: store.prefs.displayName)
-        AudioSession.shared.cleanUpNoise = store.prefs.cleanUpNoise
+        applyNoiseSetting()
+        applyMusicPolicy()
         AudioSession.shared.configure()
         try await room.connect(url: Config.livekitURL, token: token)
         try await room.localParticipant.setMicrophone(enabled: true)
@@ -277,10 +278,31 @@ final class LineManager: NSObject, ObservableObject {
         detector.threshold = store.prefs.thresholdDB
     }
 
-    /// Push the noise setting into the audio session while a line is live.
+    /// Noise cleanup belongs on the microphone, not on the session.
+    ///
+    /// Routing it through the session mode meant switching the whole graph to
+    /// voice processing, which reshapes the music playing through it too. This
+    /// asks LiveKit whether Apple's voice processing may be used for capture
+    /// and leaves everybody else's audio alone either way.
     func applyNoiseSetting() {
-        AudioSession.shared.cleanUpNoise = store.prefs.cleanUpNoise
-        AudioSession.shared.refreshMode()
+        do {
+            try AudioManager.shared.setPlatformVoiceProcessingAllowed(store.prefs.cleanUpNoise)
+        } catch {
+            Log.audio.error("noise setting failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// How the music behaves is Apple's job, not ours.
+    ///
+    /// `isAdvancedDuckingEnabled` lowers other audio while a voice is actually
+    /// present and lifts it the moment nobody is talking — the SharePlay
+    /// behaviour — so there is nothing to flip on and off at the edges of a
+    /// sentence and nothing left ducked if a line drops mid-word.
+    func applyMusicPolicy() {
+        AudioManager.shared.isAdvancedDuckingEnabled = store.prefs.music == .turnDown
+        if #available(iOS 17, *) {
+            AudioManager.shared.duckingLevel = store.prefs.music == .turnDown ? .default : .min
+        }
     }
 
     /// Apply the "how loud they are" slider to everyone currently on the line.
