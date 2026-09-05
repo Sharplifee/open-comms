@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenComms — Privacy</title>
+<style>
+  body{max-width:680px;margin:48px auto;padding:0 20px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       color:#14161A;background:#EDE9E1;line-height:1.55}
+  h1{font-size:28px;letter-spacing:-.02em} h2{font-size:17px;margin-top:32px}
+  p,li{font-size:15px} small{color:#6E6A62}
+</style>
+</head>
+<body>
+<h1>OpenComms privacy</h1>
+<p><small>Effective 5 September 2026. Williams &amp; Co ULTD, Lehi, Utah.</small></p>
+
+<p>OpenComms is a voice line for people who train together. It is built so that the least possible information leaves your phone, and this page says exactly what does.</p>
+
+<h2>There is no account</h2>
+<p>You are not asked for an email, a password or a phone number. Your display name is the only thing you type. The app identifies your phone with a random identifier it generates on first launch; that identifier is not tied to your Apple ID or to any other service.</p>
+
+<h2>What is sent to our server</h2>
+<ul>
+  <li><b>Your display name</b>, so people on a line know who is talking.</li>
+  <li><b>Your location</b>, while the app is open and you are visible, so people nearby can see that you are in range. Only your last position is stored, it is deleted after fifteen minutes of inactivity, and it is deleted immediately when you turn on ghost mode. Other users are never given your coordinates: the server returns them a distance and a compass direction only.</li>
+  <li><b>Which lines you open or join</b>, and when, so a line can be kept open for the people on it and closed when everyone leaves. Failed join attempts are recorded with an approximate network address so that guessing at codes can be rate-limited.</li>
+  <li><b>Anyone you block or report</b>, so the block holds after you close the app.</li>
+  <li><b>Contact matching, only if you allow Contacts.</b> Phone numbers are hashed on your phone using SHA-256 before anything is sent; the server compares hashes and returns matches. Readable numbers never leave your device and are never stored.</li>
+  <li><b>Crash reports</b>, through Sentry, if the app crashes. These contain a stack trace and device model, not your name or location.</li>
+</ul>
+
+<h2>Voice</h2>
+<p>Your voice is carried between phones by LiveKit, a real-time audio service, and is not recorded, transcribed or stored by OpenComms or by LiveKit on our behalf. When nobody is on a line, your microphone is used only on your own phone to measure how loud you are for the sensitivity meter; that audio is not transmitted.</p>
+
+<h2>What we do not do</h2>
+<ul>
+  <li>We do not sell or share your data with anyone.</li>
+  <li>We do not show advertising or use tracking of any kind.</li>
+  <li>We do not read your music, your contacts' names, or anything from your address book beyond the hashed numbers described above.</li>
+</ul>
+
+<h2>Deleting your data</h2>
+<p>Settings &rarr; Audio &rarr; About &rarr; <b>Delete everything about me</b> removes your name, saved squads, blocks and everything stored about your phone from the server immediately. Because there is no account, there is nothing further to close.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy: <a href="https://github.com/Sharplifee/open-comms/issues">github.com/Sharplifee/open-comms/issues</a>.</p>
+</body>
+</html>
