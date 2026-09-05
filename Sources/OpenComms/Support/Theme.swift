@@ -6,15 +6,23 @@ import SwiftUI
 /// tab, headings — and the moment that happens a glance mid-set stops
 /// answering "is anyone talking". Everything else is graphite.
 enum Theme {
-    static let base    = Color(hex: 0x14161A)
-    static let surface = Color(hex: 0x1C1F25)
-    static let raised  = Color(hex: 0x232730)
-    static let line    = Color(hex: 0x2E333D)
-    static let text    = Color(hex: 0xF2F3F5)
-    static let muted   = Color(hex: 0x8A909C)
-    static let dim     = Color(hex: 0x5A616D)
-    static let signal  = Color(hex: 0xEBCB4B)
-    static let danger  = Color(hex: 0xE5605A)
+    /// Flipped by the header pill. Read on every access rather than cached,
+    /// so a view that re-renders for any reason picks the right palette up.
+    /// Every screen observes the store, so toggling re-renders all of them.
+    nonisolated(unsafe) static var light = false
+
+    static var base:    Color { light ? Color(hex: 0xEDE9E1) : Color(hex: 0x14161A) }
+    static var surface: Color { light ? Color(hex: 0xE4DFD5) : Color(hex: 0x1C1F25) }
+    static var raised:  Color { light ? Color(hex: 0xD9D3C7) : Color(hex: 0x232730) }
+    static var line:    Color { light ? Color(hex: 0xCFC8BB) : Color(hex: 0x2E333D) }
+    static var text:    Color { light ? Color(hex: 0x14161A) : Color(hex: 0xF2F3F5) }
+    static var muted:   Color { light ? Color(hex: 0x6E6A62) : Color(hex: 0x8A909C) }
+    static var dim:     Color { light ? Color(hex: 0x9A958B) : Color(hex: 0x5A616D) }
+    static var signal:  Color { light ? Color(hex: 0xB98F0B) : Color(hex: 0xEBCB4B) }
+    static var danger:  Color { light ? Color(hex: 0xA63B36) : Color(hex: 0xE5605A) }
+    /// What sits on top of the signal colour — dark on yellow, white on the
+    /// deeper gold the light palette uses.
+    static var onSignal: Color { light ? .white : Color(hex: 0x14161A) }
 
     static let cardRadius: CGFloat = 20
     static let rowRadius: CGFloat = 16

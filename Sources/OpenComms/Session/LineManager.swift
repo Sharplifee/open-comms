@@ -61,6 +61,12 @@ final class LineManager: NSObject, ObservableObject {
 
     var talker: Member? { members.first { $0.isSpeaking && !$0.isSelf && !$0.mutedForMe } }
     var level: Double { detector.level }
+    var isSpeakingLocally: Bool { detector.speaking }
+
+    /// Runs the meter before any line exists, so the mic card on Home is
+    /// honest about how loud you need to be.
+    func startListeningOnly() { detector.threshold = store.prefs.thresholdDB; detector.start() }
+    func stopListeningOnly() { if squad == nil { detector.stop() } }
 
     private override init() {
         super.init()
@@ -146,6 +152,7 @@ final class LineManager: NSObject, ObservableObject {
                                isSelf: true)]
         store.remember(squad)
         detector.threshold = store.prefs.thresholdDB
+        detector.selfMonitorGain = Float(store.prefs.selfMonitor)
         detector.start()
         blockedDevices = Set(await Backend.shared.blocked().map(\.device_id))
         applyChosenVolume()
@@ -286,7 +293,7 @@ final class LineManager: NSObject, ObservableObject {
     /// and leaves everybody else's audio alone either way.
     func applyNoiseSetting() {
         do {
-            try AudioManager.shared.setPlatformVoiceProcessingAllowed(store.prefs.cleanUpNoise)
+            try AudioManager.shared.setPlatformVoiceProcessingAllowed(store.prefs.noise == .high)
         } catch {
             Log.audio.error("noise setting failed: \(error.localizedDescription)")
         }
@@ -298,11 +305,33 @@ final class LineManager: NSObject, ObservableObject {
     /// present and lifts it the moment nobody is talking — the SharePlay
     /// behaviour — so there is nothing to flip on and off at the edges of a
     /// sentence and nothing left ducked if a line drops mid-word.
+    ///
+    /// The duck amount slider picks the system level. Apple exposes four
+    /// notches, not a continuum, so the slider is bucketed rather than lying
+    /// about a smooth curve it cannot deliver.
     func applyMusicPolicy() {
-        AudioManager.shared.isAdvancedDuckingEnabled = store.prefs.music == .turnDown
+        let prefs = store.prefs
+        AudioManager.shared.isAdvancedDuckingEnabled = prefs.music == .turnDown
         if #available(iOS 17, *) {
-            AudioManager.shared.duckingLevel = store.prefs.music == .turnDown ? .default : .min
+            AudioManager.shared.duckingLevel = prefs.music != .turnDown ? .min : {
+                switch prefs.duckAmount {
+                case ..<0.2:  return .min
+                case ..<0.5:  return .default
+                case ..<0.8:  return .mid
+                default:      return .max
+                }
+            }()
         }
+        MusicController.shared.autoPause = prefs.autoPause
+        MusicController.shared.pauseAfter = TimeInterval(prefs.pauseAfter)
+        MusicController.shared.autoRewind = prefs.autoRewind
+        MusicController.shared.rewindSeconds = TimeInterval(prefs.rewindSeconds)
+    }
+
+    /// Push the self-monitor level into the running detector. Headphones only;
+    /// the detector refuses it on the speaker because that path is feedback.
+    func applySelfMonitor() {
+        detector.selfMonitorGain = Float(store.prefs.selfMonitor)
     }
 
     /// Apply the "how loud they are" slider to everyone currently on the line.

@@ -53,6 +53,7 @@ struct OnboardingView: View {
                 VStack(spacing: 9) {
                     permissionRow("Microphone", "So your squad can hear you")
                     permissionRow("Location", "To show who's nearby")
+                    permissionRow("Contacts", "To match people you already know")
                     permissionRow("Bluetooth", "To use your AirPods")
                     permissionRow("Media & Apple Music", "To turn your music down and back up")
                     permissionRow("Local Network", "To connect voice directly when you're close")
@@ -99,12 +100,14 @@ struct OnboardingView: View {
         AVAudioApplication.requestRecordPermission { _ in
             DispatchQueue.main.async {
                 NearbyEngine.shared.start()
-                // Contacts is deliberately not requested. The matching feature
-                // is not built — phone_hash is never set and match_contacts is
-                // never called — and asking for an address book the app does
-                // not use is both a review risk and the wrong thing to do.
-                store.prefs.onboarded = true
-                asking = false
+                // Contacts is asked for here because the Contacts tab uses it:
+                // numbers are hashed on the phone and matched by hash on the
+                // server, nothing readable leaves the device.
+                Task {
+                    await ContactMatcher.shared.request()
+                    store.prefs.onboarded = true
+                    asking = false
+                }
             }
         }
     }
@@ -166,7 +169,7 @@ struct PrimaryButton: ButtonStyle {
             .font(.system(size: 16.5, weight: .bold, design: .rounded))
             .frame(maxWidth: .infinity).padding(.vertical, 19)
             .background(hot ? Theme.signal : Theme.text)
-            .foregroundStyle(Theme.base)
+            .foregroundStyle(hot ? Theme.onSignal : Theme.base)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
             .opacity(configuration.isPressed ? 0.85 : 1)
     }

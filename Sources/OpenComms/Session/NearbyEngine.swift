@@ -14,11 +14,13 @@ final class NearbyEngine: NSObject, ObservableObject {
 
     @Published private(set) var people: [NearbyPerson] = []
     @Published private(set) var denied = false
-    @Published var radiusMetres: Double = 152 {  // 500 ft by default
-        // Widening the range and waiting eight seconds to find out whether it
-        // helped reads as the control not working.
-        didSet { Task { await refresh() } }
-    }
+    /// The chosen radar range, read straight from the saved preference so the
+    /// engine and the radar can never disagree about what "in range" means.
+    var radiusMetres: Double { Store.shared.prefs.radiusMetres }
+
+    /// Widening the range and waiting eight seconds to find out whether it
+    /// helped reads as the control not working, so a change refreshes now.
+    func rangeChanged() { Task { await refresh() } }
 
     private let manager = CLLocationManager()
     private var lastWrite = Date.distantPast

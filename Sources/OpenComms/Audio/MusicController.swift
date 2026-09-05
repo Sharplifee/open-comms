@@ -7,65 +7,80 @@ import MediaPlayer
 /// seek API, so it silently does nothing there. That is the accepted
 /// behaviour, not a bug to keep chasing: failing quietly is better than
 /// pausing somebody's podcast and being unable to put it back.
+///
+/// Ducking itself is not done here — Apple's voice processing lowers other
+/// audio while a voice is present and lifts it when nobody is talking, driven
+/// through LiveKit in `LineManager.applyMusicPolicy`. This file only owns the
+/// things that need a real decision: pausing, and where to resume.
 @MainActor
 final class MusicController {
     static let shared = MusicController()
     private let player = MPMusicPlayerController.systemMusicPlayer
 
     private var pausedByUs = false
+    private var pauseTimer: Task<Void, Never>?
 
-    /// How far back to drop in when the track restarts after a pause.
-    ///
-    /// Nothing is missed while the music is paused — the track is exactly
-    /// where it stopped — so the only reason to rewind at all is that coming
-    /// back mid-word is jarring. A couple of seconds of run-up fixes that.
-    private let reentryLead: TimeInterval = 3
+    /// The saved settings, pushed in by `LineManager` so this file never has
+    /// to know about the store.
+    var autoPause = false
+    var pauseAfter: TimeInterval = 8
+    var autoRewind = true
+    var rewindSeconds: TimeInterval = 20
 
     func speechBegan(_ behaviour: MusicBehaviour) {
         switch behaviour {
         case .turnDown:
-            // Nothing to do. The system ducks other audio for as long as a
-            // voice is present, so there is no edge for this app to act on.
-            break
-        case .pauseAndRewind:
-            if player.playbackState == .playing {
-                player.pause()
-                pausedByUs = true
+            // The system is ducking. If the talking runs long, ducked music
+            // is just noise under a conversation, so pause it outright after
+            // the chosen number of seconds — and only then.
+            guard autoPause else { return }
+            pauseTimer?.cancel()
+            pauseTimer = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(self?.pauseAfter ?? 8))
+                guard !Task.isCancelled else { return }
+                self?.pauseIfPlaying()
             }
+        case .pauseAndRewind:
+            pauseIfPlaying()
         case .leaveAlone:
             break
         }
     }
 
     func speechEnded(_ behaviour: MusicBehaviour) {
+        pauseTimer?.cancel(); pauseTimer = nil
         switch behaviour {
-        case .turnDown:
-            break
-        case .pauseAndRewind:
-            guard pausedByUs else { return }
-            pausedByUs = false
-            // Rewind by a short run-up, NOT by how long the talking lasted.
-            //
-            // The old version backed up by the full length of the
-            // conversation, which is the rule for music that kept playing —
-            // and this music did not. It was paused, so the track sat exactly
-            // where it stopped and nothing was missed. Backing up two minutes
-            // after a two minute chat replayed two minutes somebody had
-            // already heard, every single time.
-            player.currentPlaybackTime = max(0, player.currentPlaybackTime - reentryLead)
-            player.play()
+        case .turnDown, .pauseAndRewind:
+            resumeIfWePaused()
         case .leaveAlone:
             break
         }
     }
 
     /// Belt and braces for the moment a line closes: nothing should be left
-    /// ducked or paused by us.
+    /// paused by us.
     func restore() {
-        if pausedByUs {
-            pausedByUs = false
-            player.currentPlaybackTime = max(0, player.currentPlaybackTime - reentryLead)
-            player.play()
+        pauseTimer?.cancel(); pauseTimer = nil
+        resumeIfWePaused()
+    }
+
+    private func pauseIfPlaying() {
+        guard player.playbackState == .playing else { return }
+        player.pause()
+        pausedByUs = true
+    }
+
+    /// Where the track picks up is a setting, not a formula.
+    ///
+    /// The music was paused, so the track sits exactly where it stopped and
+    /// nothing was missed; the rewind is a run-up so you do not land mid-word.
+    /// With auto rewind off it resumes in place.
+    private func resumeIfWePaused() {
+        guard pausedByUs else { return }
+        pausedByUs = false
+        if autoRewind {
+            player.currentPlaybackTime = max(0, player.currentPlaybackTime - rewindSeconds)
         }
+        player.play()
     }
 }

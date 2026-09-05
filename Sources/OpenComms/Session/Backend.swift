@@ -90,6 +90,13 @@ actor Backend {
         ])) ?? []
     }
 
+    /// Which of these hashes belong to somebody who has the app. Failure is
+    /// an empty list rather than an error: the Contacts screen has nothing
+    /// useful to say about a network blip except "nobody yet".
+    func matchContacts(hashes: [String]) async -> [ContactRow] {
+        (try? await rpc("match_contacts", ["p_hashes": hashes])) ?? []
+    }
+
     func updateLocation(lat: Double, lon: Double) async {
         _ = try? await rpcVoid("update_location", [
             "p_device_id": DeviceIdentity.id, "p_lat": lat, "p_lon": lon
@@ -201,6 +208,11 @@ struct JoinRow: Decodable {
     let r_squad_name: String?
     let r_join_code: String?
     let r_is_creator: Bool
+}
+
+struct ContactRow: Decodable {
+    let phone_hash: String
+    let display_name: String
 }
 
 /// Decoded straight from the RPC, so the field names are the server's.

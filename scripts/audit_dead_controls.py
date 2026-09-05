@@ -48,13 +48,36 @@ def derived_from() -> dict[str, list[str]]:
     property — `sensitivity` is consumed everywhere as `thresholdDB`. Counting
     only the raw name would flag that as dead and teach everyone to ignore
     this check, which is worse than not having it.
+
+    Bodies are found by counting braces rather than by regex, because a
+    one-line computed property (`var x: T { expr }`) and a multi-line one
+    with get/set blocks do not share a shape a regex can hold.
     """
     text = MODELS.read_text()
-    match = re.search(r"struct Preferences[^{]*\{(.*?)\n\}", text, re.S)
-    body = match.group(1) if match else ""
+    match = re.search(r"struct Preferences[^{]*\{", text)
+    if not match:
+        return {}
+    # slice the struct body by brace depth
+    depth, i, start = 0, match.end() - 1, match.end()
+    while i < len(text):
+        depth += text[i] == "{"
+        depth -= text[i] == "}"
+        if depth == 0:
+            break
+        i += 1
+    body = text[start:i]
     stored = set(preference_names())
     out: dict[str, list[str]] = {}
-    for name, expr in re.findall(r"var ([a-zA-Z]+):\s*[^={]+\{(.*?)\n    \}", body, re.S):
+    for m in re.finditer(r"var (\w+)\s*:\s*[^={\n]+\{", body):
+        name = m.group(1)
+        d, j = 0, m.end() - 1
+        while j < len(body):
+            d += body[j] == "{"
+            d -= body[j] == "}"
+            if d == 0:
+                break
+            j += 1
+        expr = body[m.end():j]
         out[name] = [s for s in stored if re.search(rf"\b{s}\b", expr)]
     return out
 

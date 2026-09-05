@@ -114,16 +114,48 @@ enum FocusLength: Int, CaseIterable, Identifiable {
     var title: String { "\(rawValue) seconds" }
 }
 
+/// How hard the microphone is cleaned up before it goes out.
+///
+/// Two settings, not three, because there are only two genuinely different
+/// things the phone can do: run WebRTC's software noise suppression, or hand
+/// the capture to Apple's voice processing as well. A third notch would be a
+/// switch that moved and changed nothing.
+enum NoiseSuppression: String, Codable, CaseIterable {
+    case low, high
+    var title: String { self == .low ? "Low" : "High" }
+    var detail: String {
+        self == .low ? "Software cleanup only. Cleaner if you're somewhere quiet."
+                     : "Apple's voice processing on top. Filters gym noise before it goes out."
+    }
+}
+
 struct Preferences: Codable {
     var displayName = ""
     var music: MusicBehaviour = .turnDown
     var visibility: Visibility = .visible
     /// −55 dB to −12 dB. Low means a whisper opens the line.
     var sensitivity: Double = 0.55
-    var cleanUpNoise = true
+    var noise: NoiseSuppression = .high
     var lowPower = false
     var soundCues = true
+    /// Intercom volume — how loud everybody else comes through.
     var theirVolume: Double = 0.8
+    /// A little of your own voice back in your ear, so you can tell you are
+    /// coming through without shouting. Headphones only; on the speaker it
+    /// would feed back.
+    var selfMonitor: Double = 0.2
+    /// How far the music drops while somebody is talking, as a fraction.
+    var duckAmount: Double = 0.35
+    /// If the talking runs longer than `pauseAfter` seconds, pause the track
+    /// entirely instead of leaving it ducked.
+    var autoPause = false
+    var pauseAfter: Int = 8
+    /// Jump back after a conversation so you don't miss anything.
+    var autoRewind = true
+    var rewindSeconds: Int = 20
+    /// Which of the nine radar ranges is selected.
+    var radiusIndex: Int = 2
+    var lightTheme = false
     var onboarded = false
 
     /// The Home screen shows these as two switches because that is how people
@@ -138,6 +170,14 @@ struct Preferences: Codable {
         get { visibility != .visible }
         set { if visibility != .hidden { visibility = newValue ? .codeOnly : .visible } }
     }
+
+    static let ranges: [(label: String, metres: Double)] = [
+        ("100 FT", 30.5), ("250 FT", 76.2), ("500 FT", 152.4), ("0.25 MI", 402.3),
+        ("1 MI", 1609.3), ("5 MI", 8046.7), ("25 MI", 40233.6), ("100 MI", 160934.4),
+        ("ANYWHERE", 20_000_000)
+    ]
+    var radiusMetres: Double { Preferences.ranges[min(max(radiusIndex, 0), 8)].metres }
+    var radiusLabel: String { Preferences.ranges[min(max(radiusIndex, 0), 8)].label }
 
     var thresholdDB: Double { -55 + sensitivity * 43 }
     var sensitivityLabel: String {

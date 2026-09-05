@@ -25,12 +25,34 @@ final class VoiceDetector: ObservableObject {
     var threshold: Double = -32          // dB, driven by the sensitivity slider
     var onChange: ((Bool) -> Void)?
 
+    /// A little of your own voice back in your ear.
+    ///
+    /// The engine already has the input tapped for the meter, so routing it to
+    /// the output at a low gain costs nothing extra. It is gated to headphones
+    /// because on the speaker the same path is a feedback loop.
+    private let monitor = AVAudioMixerNode()
+    var selfMonitorGain: Float = 0 {
+        didSet { applyMonitorGain() }
+    }
+
+    private func applyMonitorGain() {
+        let onSpeaker = AVAudioSession.sharedInstance().currentRoute.outputs
+            .first?.portType == .builtInSpeaker
+        monitor.outputVolume = onSpeaker ? 0 : selfMonitorGain
+    }
+
     /// Runs before anybody joins a line, so the meter is honest on the
     /// settings screen and you can see how loud you need to be.
     func start() {
         guard !running else { return }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        if monitor.engine == nil {
+            engine.attach(monitor)
+            engine.connect(input, to: monitor, format: format)
+            engine.connect(monitor, to: engine.mainMixerNode, format: format)
+            applyMonitorGain()
+        }
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             guard let channel = buffer.floatChannelData?[0] else { return }
             let frames = Int(buffer.frameLength)

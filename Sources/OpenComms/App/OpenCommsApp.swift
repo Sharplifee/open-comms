@@ -22,6 +22,7 @@ struct OpenCommsApp: App {
         // server — and an unknown device is invisible on everybody's radar.
         // It is an upsert, so this is cheap and idempotent.
         let prefs = Store.shared.prefs
+        Theme.light = prefs.lightTheme
         if !prefs.displayName.isEmpty {
             Task {
                 await Backend.shared.registerDevice(displayName: prefs.displayName,
