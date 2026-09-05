@@ -29,13 +29,19 @@ def builds():
         return json.load(response).get("data", [])
 
 
-for attempt in range(30):
+# Apple took 24 minutes to process build 25, well past the old 15-minute
+# window, so the run reported a failure for a build that was fine. A green
+# upload followed by a red verify is worse than either alone: it reads as
+# "Apple rejected it" and sends somebody hunting through an inbox for an
+# ITMS email that does not exist. Sixty polls at thirty seconds is half an
+# hour, which covers every processing time seen so far with room to spare.
+for attempt in range(60):
     for build in builds():
         attributes = build["attributes"]
         if attributes.get("version") == WANT:
             print(f"build {WANT} present, state {attributes.get('processingState')}")
             sys.exit(0)
-    print(f"build {WANT} not visible yet, waiting… ({attempt + 1}/30)")
+    print(f"build {WANT} not visible yet, waiting… ({attempt + 1}/60)")
     time.sleep(30)
 
 print(f"build {WANT} never appeared in App Store Connect")
