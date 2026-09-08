@@ -32,8 +32,17 @@ final class AudioSession {
                                     options: [.mixWithOthers, .allowBluetooth,
                                               .allowBluetoothA2DP, .defaultToSpeaker])
             try session.setPreferredSampleRate(48_000)
-            try session.setPreferredIOBufferDuration(0.005)
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            // 5 ms was chosen for latency, but a buffer that small forces the
+            // hardware into a high-rate mode that everything sharing the
+            // session inherits, and on headphones that is audible on music as
+            // a thinner, harder sound. 10 ms is still well under anything a
+            // person perceives in conversation and leaves other audio alone.
+            try session.setPreferredIOBufferDuration(0.01)
+            // NOT .notifyOthersOnDeactivation — that flag belongs on
+            // deactivation. Passing it on activation does nothing useful, and
+            // activation itself is what interrupts other audio if the category
+            // is wrong, which is why the category is always set first.
+            try session.setActive(true)
             configured = true
             observe()
             Log.audio.info("audio session ready on \(self.routeName)")
@@ -42,9 +51,24 @@ final class AudioSession {
         }
     }
 
+    /// Hand the audio system back.
+    ///
+    /// `.notifyOthersOnDeactivation` is what tells whatever was playing that it
+    /// may return to full volume and full quality. Without it another app can
+    /// sit ducked, or stay in the degraded shared configuration, long after
+    /// this app has stopped caring.
     func deactivate() {
+        guard configured else { return }
         configured = false
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        do {
+            try session.setActive(false, options: .notifyOthersOnDeactivation)
+            Log.audio.info("audio session released")
+        } catch {
+            // Deactivating while another part of the app still holds the
+            // session throws, and that is not worth surfacing — it means
+            // somebody else is using it, which is fine.
+            Log.audio.info("audio session still in use: \(error.localizedDescription)")
+        }
     }
 
     var routeName: String {

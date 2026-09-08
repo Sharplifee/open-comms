@@ -60,7 +60,10 @@ struct HomeView: View {
         .alert("Couldn't open the line", isPresented: failureBinding) {
             Button("OK") { line.dismissFailure() }
         } message: { if case .failed(let why) = line.phase { Text(why) } }
-        .onAppear { line.startListeningOnly() }
+        // Deliberately NOT starting the microphone here. Opening the app must
+        // not take over somebody's music, and touching the input node is what
+        // does that. The meter runs when the person taps it, or when a line
+        // is open.
         .onDisappear { line.stopListeningOnly() }
         .onChange(of: store.prefs.radiusIndex) { _, _ in nearby.rangeChanged() }
         .onChange(of: store.prefs.sensitivity) { _, _ in line.applySensitivity() }
@@ -130,7 +133,9 @@ struct HomeView: View {
             }
 
             MicCard(detector: line.detector, live: line.micLive, onLine: false,
-                    sensitivity: $store.prefs.sensitivity) { line.setMic(!line.micLive) }
+                    sensitivity: $store.prefs.sensitivity) {
+                if line.isListening { line.stopListeningOnly() } else { line.startListeningOnly() }
+            }
                 .padding(.horizontal, 20).padding(.top, 14)
 
             if !store.saved.isEmpty {

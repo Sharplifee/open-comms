@@ -79,8 +79,34 @@ final class LineManager: NSObject, ObservableObject {
 
     /// Runs the meter before any line exists, so the mic card on Home is
     /// honest about how loud you need to be.
-    func startListeningOnly() { detector.threshold = store.prefs.thresholdDB; detector.start() }
-    func stopListeningOnly() { if squad == nil { detector.stop() } }
+    /// Run the meter without being on a line, so somebody can see where their
+    /// voice lands and set the marker.
+    ///
+    /// This is NEVER called just because a screen appeared. Touching
+    /// `AVAudioEngine.inputNode` activates the shared audio session, and if
+    /// the app has not set its category first that activation is a plain
+    /// record session with no mixing — which stops whatever the person was
+    /// listening to. Opening an app must not take somebody's podcast away.
+    /// So: configure first, with .mixWithOthers, then start the engine, and
+    /// only when the person asked for it.
+    func startListeningOnly() {
+        guard squad == nil else { return }
+        applyNoiseSetting()
+        AudioSession.shared.configure()
+        detector.threshold = store.prefs.thresholdDB
+        detector.selfMonitorGain = Float(store.prefs.selfMonitor)
+        detector.start()
+    }
+
+    /// Give the audio system back when nobody is on a line, so other apps get
+    /// their session and their quality back rather than sharing ours forever.
+    func stopListeningOnly() {
+        guard squad == nil else { return }
+        detector.stop()
+        AudioSession.shared.deactivate()
+    }
+
+    var isListening: Bool { detector.isListening }
 
     private override init() {
         super.init()
@@ -264,6 +290,10 @@ final class LineManager: NSObject, ObservableObject {
         await room.disconnect()
         AudioSession.shared.deactivate()
         squad = nil; members = []; openedAt = nil; micLive = false; connecting = false
+        // Leaving a line means giving the audio system back. Holding a
+        // playAndRecord session open after the last person has gone keeps
+        // everybody else's audio sharing our configuration for no reason.
+        AudioSession.shared.deactivate()
         phase = .closed
     }
 

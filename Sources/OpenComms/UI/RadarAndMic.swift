@@ -187,26 +187,38 @@ struct MicCard: View {
         return names[min(8, Int(sensitivity * 9))]
     }
     private var hasSignal: Bool { detector.isListening }
+    private var tint: Color {
+        if !onLine { return hasSignal ? Theme.signal : Theme.muted }
+        return live ? Theme.signal : Theme.danger
+    }
     private var crossing: Bool { hasSignal && detector.decibels >= thresholdDB }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 Button(action: onToggleMic) {
-                    Image(systemName: live ? "mic.fill" : "mic.slash.fill")
+                    // Off a line the mic button means "show me my level", so it
+                    // is not red — nothing is muted, the meter is simply idle.
+                    Image(systemName: onLine ? (live ? "mic.fill" : "mic.slash.fill")
+                                             : (hasSignal ? "waveform" : "mic"))
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(live ? Theme.signal : Theme.danger)
+                        .foregroundStyle(tint)
                         .frame(width: 46, height: 46)
-                        .background((live ? Theme.signal : Theme.danger).opacity(0.12), in: Circle())
+                        .background(tint.opacity(0.12), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(live ? "Microphone live. Tap to mute." : "Microphone muted. Tap to unmute.")
+                .accessibilityLabel(onLine ? (live ? "Microphone live. Tap to mute." : "Microphone muted. Tap to unmute.")
+                                           : (hasSignal ? "Level meter running. Tap to stop." : "Tap to check your level."))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(!onLine ? "Listening" : live ? "Microphone" : "Microphone muted")
+                    Text(!onLine ? (hasSignal ? "Listening" : "Check your level")
+                         : live ? "Microphone" : "Microphone muted")
                         .font(.system(size: 17, weight: .bold, design: .rounded))
-                    Text("Opens at \(Int(thresholdDB.rounded())) dB · \(mode)")
+                    Text(!onLine && !hasSignal
+                         ? "Tap the mic to watch your level · opens at \(Int(thresholdDB.rounded())) dB"
+                         : "Opens at \(Int(thresholdDB.rounded())) dB · \(mode)")
                         .font(.system(size: 12.5, design: .rounded)).foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 // The live number. Big enough to read from a bench.
