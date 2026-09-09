@@ -165,7 +165,6 @@ struct Preferences: Codable {
     /// Which skin. Colour only — every screen and control is identical in all
     /// of them, so this can never be the reason something behaves differently.
     var skin: Skin = .dark
-    var onboarded = false
 
     /// The Home screen shows these as two switches because that is how people
     /// think about them. They are not two settings: hidden beats code-only,

@@ -190,6 +190,20 @@ final class LineManager: NSObject, ObservableObject {
             return
         }
 
+        // Onboarding used to ask for the microphone before anything happened.
+        // With that gone, this is the moment it is genuinely needed — and
+        // asking here means the prompt arrives with an obvious reason
+        // attached, which is when people say yes.
+        if AVAudioApplication.shared.recordPermission == .undetermined {
+            let granted = await withCheckedContinuation { continuation in
+                AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
+            }
+            guard granted else {
+                phase = .failed("OpenComms needs the microphone to open a line. Turn it on in Settings.")
+                return
+            }
+        }
+
         // On screen instantly. `connecting` is what the session view uses to
         // show a thin line at the top rather than a wall in the middle.
         squad = Squad(id: "", name: name, code: code, isHost: creating)

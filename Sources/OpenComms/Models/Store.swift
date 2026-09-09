@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Combine
 
 /// Preferences and saved squads, kept on the phone and mirrored to iCloud so a
@@ -16,6 +17,25 @@ final class Store: ObservableObject {
     private init() {
         prefs = load(Preferences.self, key: prefsKey) ?? Preferences()
         saved = load([SavedSquad].self, key: savedKey) ?? []
+    }
+
+    /// Give this phone a name without asking for one.
+    ///
+    /// "Connor's iPhone" is what the device already calls itself and what
+    /// every AirDrop sheet has shown for years, so it is both accurate and
+    /// familiar. Anybody who dislikes it changes it in Audio, in one field,
+    /// which is a far smaller imposition than a screen you cannot get past.
+    func ensureName() {
+        guard prefs.displayName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let device = UIDevice.current.name
+        // "Connor's iPhone" → "Connor". The possessive is the useful half.
+        let possessive = device.range(of: "'s ") ?? device.range(of: "’s ")
+        let name = possessive.map { String(device[device.startIndex..<$0.lowerBound]) } ?? device
+        prefs.displayName = String(name.prefix(18))
+        Task {
+            await Backend.shared.registerDevice(displayName: prefs.displayName, phoneHash: nil,
+                                                hidden: prefs.visibility == .hidden)
+        }
     }
 
     func remember(_ squad: Squad) {
