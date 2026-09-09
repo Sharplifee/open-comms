@@ -124,9 +124,14 @@ struct HomeView: View {
             Text("OpenComms").font(.system(size: 26, weight: .bold, design: .rounded))
             Spacer()
             HStack(spacing: 8) {
-                Button(store.prefs.lightTheme ? "Light" : "Dark") {
-                    store.prefs.lightTheme.toggle()
-                    Theme.light = store.prefs.lightTheme
+                // Tap to cycle Dark → Light → Court. A cycle rather than a
+                // picker because there are three of them and the whole
+                // interaction is worth one tap, not a sheet.
+                Button(store.prefs.skin.badge) {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        store.prefs.skin = store.prefs.skin.next
+                        Theme.skin = store.prefs.skin
+                    }
                     Haptics.tap(.light)
                 }
                 .font(.system(size: 11, weight: .bold, design: .rounded))

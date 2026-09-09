@@ -97,6 +97,20 @@ struct AudioView: View {
                         .onChange(of: store.prefs.sensitivity) { _, _ in line.applySensitivity() }
                 }
 
+                section("LOOK")
+                card {
+                    VStack(spacing: 1) {
+                        ForEach(Skin.allCases) { option in
+                            choice(option.title, skinDetail(option), store.prefs.skin == option) {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    store.prefs.skin = option
+                                    Theme.skin = option
+                                }
+                            }
+                        }
+                    }
+                }
+
                 section("BATTERY & FEEDBACK")
                 card {
                     toggle("Low power mode", "Widens location updates and slows the radar once you're on a line", $store.prefs.lowPower)
@@ -189,6 +203,14 @@ struct AudioView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Your name, your saved squads and anything stored about this phone are removed from the server. There is no account to close.")
+        }
+    }
+
+    private func skinDetail(_ skin: Skin) -> String {
+        switch skin {
+        case .dark:  return "Graphite. Easiest to read indoors and at night."
+        case .light: return "Paper white, for bright sun."
+        case .court: return "Championship green and chalk, with the ball as the live-audio colour."
         }
     }
 

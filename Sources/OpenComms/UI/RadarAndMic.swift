@@ -78,9 +78,13 @@ struct RadarCard: View {
                     let maxR = min(size.width, size.height) / 2 - 12
                     for ring in 1...4 {
                         let r = maxR * Double(ring) / 4
+                        // Chalk on grass needs more presence than a hairline
+                        // on graphite; on the court skin the rings ARE the
+                        // court markings.
                         context.stroke(Path(ellipseIn: CGRect(x: centre.x - r, y: centre.y - r,
                                                               width: r * 2, height: r * 2)),
-                                       with: .color(Theme.line.opacity(0.7)), lineWidth: 1)
+                                       with: .color(Theme.line.opacity(Theme.skin == .court ? 0.95 : 0.7)),
+                                       lineWidth: Theme.skin == .court ? 1.4 : 1)
                         let metres = radius * Double(ring) / 4
                         let text = metres < 300 ? "\(Int(metres * 3.28084)) ft"
                                                 : String(format: "%.1f mi", metres / 1609.34)
