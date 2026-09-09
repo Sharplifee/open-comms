@@ -127,6 +127,26 @@ struct HomeView: View {
                 // Tap to cycle Dark → Light → Court. A cycle rather than a
                 // picker because there are three of them and the whole
                 // interaction is worth one tap, not a sheet.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        store.prefs.courtMode = true
+                        // Court mode arrives dressed for it. The skin is still
+                        // free to change afterwards.
+                        if store.prefs.skin != .court {
+                            store.prefs.skin = .court
+                            Theme.skin = .court
+                        }
+                    }
+                    Haptics.tap(.light)
+                } label: {
+                    Label("Court", systemImage: "figure.tennis")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.signal)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .overlay(Capsule().stroke(Theme.signal, lineWidth: 1))
+                }
+
                 Button(store.prefs.skin.badge) {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         store.prefs.skin = store.prefs.skin.next

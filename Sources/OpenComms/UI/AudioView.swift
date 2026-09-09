@@ -97,6 +97,13 @@ struct AudioView: View {
                         .onChange(of: store.prefs.sensitivity) { _, _ in line.applySensitivity() }
                 }
 
+                section("MODE")
+                card {
+                    toggle("Court mode",
+                           "Swaps Home for a tennis screen: the score, silent signals to your partner, and which side you're on. Same line, same audio, same people underneath.",
+                           $store.prefs.courtMode)
+                }
+
                 section("LOOK")
                 card {
                     VStack(spacing: 1) {

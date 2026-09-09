@@ -374,6 +374,9 @@ final class LineManager: NSObject, ObservableObject {
     /// with anything else the room might carry later.
     static let controlTopic = "opencomms.control"
     static let endedMessage = "line-ended"
+    /// Court mode's silent signals and the shared score ride their own topic,
+    /// so a future message type can never be mistaken for one of them.
+    static let courtTopic = "opencomms.court"
 
     private func teardown() async {
         heartbeat?.cancel(); heartbeat = nil
@@ -428,6 +431,63 @@ final class LineManager: NSObject, ObservableObject {
         guard let index = members.firstIndex(where: { $0.deviceID == member.deviceID }) else { return }
         members[index].volume = volume
         if !members[index].mutedForMe { apply(volume: volume, to: member.deviceID) }
+    }
+
+    // MARK: - Court mode
+
+    /// The last signal a partner sent, and when. The view shows it for a few
+    /// seconds and then lets it go — a signal is about the next point, not
+    /// something to keep.
+    @Published private(set) var lastSignal: (signal: PartnerSignal, at: Date)?
+    /// The score both phones agree on.
+    @Published var score = MatchScore()
+
+    /// Tell your partner something without saying it out loud.
+    ///
+    /// It lands as a haptic and a spoken label in their ear, which is the
+    /// point: your opponents cannot see a hand behind a back if there is no
+    /// hand, and neither of you has to have agreed what a fist means.
+    func send(_ signal: PartnerSignal) {
+        Haptics.tap(.rigid)
+        guard squad != nil else { return }
+        Task {
+            try? await room.localParticipant.publish(
+                data: Data("signal:\(signal.rawValue)".utf8),
+                options: DataPublishOptions(topic: LineManager.courtTopic, reliable: true))
+        }
+    }
+
+    /// Keep both scoreboards the same. Whoever taps is right; the other phone
+    /// follows. Arguing about which device is authoritative is not worth a
+    /// single point.
+    func shareScore() {
+        guard squad != nil, let data = try? JSONEncoder().encode(score) else { return }
+        Task {
+            try? await room.localParticipant.publish(
+                data: Data("score:".utf8) + data,
+                options: DataPublishOptions(topic: LineManager.courtTopic, reliable: true))
+        }
+    }
+
+    fileprivate func receiveCourt(_ data: Data) {
+        let text = String(decoding: data, as: UTF8.self)
+        if text.hasPrefix("signal:") {
+            let raw = String(text.dropFirst("signal:".count))
+            guard let signal = PartnerSignal(rawValue: raw) else { return }
+            lastSignal = (signal, Date())
+            // Two taps, so it is distinguishable from every other buzz the
+            // phone makes during a match.
+            Haptics.tap(.rigid)
+            Task {
+                try? await Task.sleep(for: .milliseconds(120))
+                Haptics.tap(.rigid)
+            }
+            Cues.joined(store.prefs.soundCues)
+        } else if text.hasPrefix("score:") {
+            let payload = data.dropFirst("score:".count)
+            guard let incoming = try? JSONDecoder().decode(MatchScore.self, from: Data(payload)) else { return }
+            score = incoming
+        }
     }
 
     /// Push the sensitivity slider into the running detector.
@@ -697,6 +757,10 @@ extension LineManager: RoomDelegate {
     nonisolated func room(_ room: Room, participant: RemoteParticipant?,
                           didReceiveData data: Data, forTopic topic: String,
                           encryptionType: EncryptionType) {
+        if topic == LineManager.courtTopic {
+            Task { @MainActor in receiveCourt(data) }
+            return
+        }
         guard topic == LineManager.controlTopic,
               String(decoding: data, as: UTF8.self) == LineManager.endedMessage else { return }
         Task { @MainActor in

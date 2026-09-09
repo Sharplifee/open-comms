@@ -162,6 +162,12 @@ struct Preferences: Codable {
     var rewindSeconds: Int = 20
     /// Which of the nine radar ranges is selected.
     var radiusIndex: Int = 2
+    /// Court mode replaces the Home screen with a tennis one — score, silent
+    /// partner signals, court side — and leaves everything underneath alone.
+    /// Separate from `skin`, because one is what the app looks like and the
+    /// other is what it is for.
+    var courtMode = false
+
     /// Which skin. Colour only — every screen and control is identical in all
     /// of them, so this can never be the reason something behaves differently.
     var skin: Skin = .dark

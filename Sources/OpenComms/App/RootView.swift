@@ -23,16 +23,26 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
+    @EnvironmentObject private var store: Store
     @State private var tab = 0
 
     var body: some View {
         TabView(selection: $tab) {
-            HomeView().tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
-            SquadView().tabItem { Label("Squad", systemImage: "person.2.fill") }.tag(1)
-            ContactsView().tabItem { Label("Contacts", systemImage: "person.crop.circle.fill") }.tag(2)
+            // Court mode swaps the first tab and drops the two that make no
+            // sense on a court: you do not need a radar to find somebody eight
+            // feet away, and nobody scrolls their address book between points.
+            if store.prefs.courtMode {
+                CourtView().tabItem { Label("Court", systemImage: "figure.tennis") }.tag(0)
+                SquadView().tabItem { Label("Partner", systemImage: "person.2.fill") }.tag(1)
+            } else {
+                HomeView().tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
+                SquadView().tabItem { Label("Squad", systemImage: "person.2.fill") }.tag(1)
+                ContactsView().tabItem { Label("Contacts", systemImage: "person.crop.circle.fill") }.tag(2)
+            }
             AudioView().tabItem { Label("Audio", systemImage: "slider.horizontal.3") }.tag(3)
             DiagView().tabItem { Label("Diag", systemImage: "gauge.with.dots.needle.bottom.50percent") }.tag(4)
         }
         .tint(Theme.signal)
+        .onChange(of: store.prefs.courtMode) { _, _ in tab = 0 }
     }
 }
