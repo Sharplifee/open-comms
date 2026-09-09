@@ -67,8 +67,8 @@ struct AudioView: View {
 
                 section("AUDIO QUALITY")
                 card {
-                    toggle("Use headset mic",
-                           "Talk through your AirPods' mic instead of the phone's. Bluetooth then drops everything you hear to phone-call quality while a line is open.",
+                    toggle("Use Bluetooth headset mic",
+                           "Only affects Bluetooth. Talking through your AirPods' mic drops everything they play to phone-call quality while a line is open. In a car or on wired headphones the near mic is used anyway, at no cost.",
                            $store.prefs.useHeadsetMic)
                         .onChange(of: store.prefs.useHeadsetMic) { _, _ in line.applyMicSource() }
                     divider

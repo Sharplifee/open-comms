@@ -47,10 +47,56 @@ final class AudioSession {
     /// pocket or on a bench is quieter but does not wreck anything.
     var useHeadsetMic = false
 
+    /// The only route where using the far microphone costs anything.
+    ///
+    /// Bluetooth is the special case, not the general one. Taking a Bluetooth
+    /// headset's microphone means the hands-free profile, and HFP drags
+    /// everything that headset plays down to telephone quality. Nothing else
+    /// works that way: CarPlay carries audio over USB or its own Wi-Fi link
+    /// and exposes the car's microphone as a separate input, wired headsets
+    /// have a real analogue mic, and the built-in speaker has the built-in
+    /// mic. On all of those you get the near microphone AND full-quality
+    /// playback at the same time, so there is nothing to trade.
+    private var onBluetoothOutput: Bool {
+        let bluetooth: Set<AVAudioSession.Port> = [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP]
+        return session.currentRoute.outputs.contains { bluetooth.contains($0.portType) }
+    }
+
+    var onCarPlay: Bool {
+        session.currentRoute.outputs.contains { $0.portType == .carAudio }
+    }
+
     private var options: AVAudioSession.CategoryOptions {
         var o: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker]
-        if useHeadsetMic { o.insert(.allowBluetooth) }
+        // Only ask for HFP when the person has accepted what it costs, and
+        // only when Bluetooth is actually the thing playing. Requesting it on
+        // CarPlay or wired headphones would be asking for a downgrade that
+        // buys nothing.
+        if useHeadsetMic, onBluetoothOutput { o.insert(.allowBluetooth) }
         return o
+    }
+
+    /// Pick the microphone that belongs to whatever is playing.
+    ///
+    /// In a car this matters: the car's microphone is mounted near the
+    /// driver's head and is the reason hands-free calling works at all, while
+    /// the phone is usually face-down in a cup holder. iOS will not choose it
+    /// on its own, so ask.
+    private func chooseInput() {
+        guard let inputs = session.availableInputs else { return }
+        let wanted: AVAudioSession.Port? = {
+            if onCarPlay { return .carAudio }
+            if useHeadsetMic, onBluetoothOutput { return .bluetoothHFP }
+            if session.currentRoute.outputs.contains(where: { $0.portType == .headphones }) {
+                return .headsetMic
+            }
+            return nil          // built-in mic is the right answer otherwise
+        }()
+        guard let wanted, let port = inputs.first(where: { $0.portType == wanted }) else {
+            try? session.setPreferredInput(nil)
+            return
+        }
+        try? session.setPreferredInput(port)
     }
 
     func configure() {
@@ -72,6 +118,7 @@ final class AudioSession {
             // activation itself is what interrupts other audio if the category
             // is wrong, which is why the category is always set first.
             try session.setActive(true)
+            chooseInput()
             configured = true
             // Once, not on every configure. This is called again after every
             // deactivate, interruption and media services reset, and each of
@@ -124,7 +171,14 @@ final class AudioSession {
     /// stays untouched, no matter what the noise setting says. Noise cleanup
     /// happens on the microphone instead, where it belongs.
     private func modeForCurrentRoute() -> AVAudioSession.Mode {
-        onSpeaker ? .voiceChat : .default
+        // Voice processing exists to cancel a speaker feeding back into a
+        // microphone in the same room. That is true of the phone's speaker and
+        // it is true of a car — the car's speakers and the car's mic are a
+        // metre apart, and without cancellation the other person hears
+        // themselves. It is not true of headphones, where nothing the ear
+        // hears reaches the mic, and where the processing costs music quality
+        // for nothing.
+        (onSpeaker || onCarPlay) ? .voiceChat : .default
     }
 
     /// Re-apply the category when the noise setting changes mid-line, so the
@@ -194,6 +248,9 @@ final class AudioSession {
                 try? self.session.setCategory(.playAndRecord, mode: self.modeForCurrentRoute(),
                                               options: options)
             }
+            // Getting into a car is a route change, and the car's microphone
+            // only becomes available at that moment.
+            self.chooseInput()
             NotificationCenter.default.post(name: .audioRouteChanged, object: nil)
         }
         centre.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification,

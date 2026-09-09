@@ -93,6 +93,14 @@ struct HomeView: View {
         }
     }
 
+    /// Only worth saying when the microphone is not the obvious one. On
+    /// CarPlay the car's mic is used and there is nothing to explain; on
+    /// Bluetooth there is a real choice and its consequence.
+    private var micNote: String {
+        if AudioSession.shared.onSpeaker || AudioSession.shared.onCarPlay { return "" }
+        return store.prefs.useHeadsetMic ? " · headset mic" : " · phone mic"
+    }
+
     /// One tap: open a line and hand the code to the person standing there.
     ///
     /// They do not type anything and neither do you. This is the path for
@@ -131,8 +139,7 @@ struct HomeView: View {
                     // Output, then which mic. "AirPods Pro · phone mic" says
                     // exactly what is happening instead of leaving somebody to
                     // wonder why their AirPods mic seems off.
-                    Text(AudioSession.shared.routeName + (AudioSession.shared.onSpeaker ? "" : store.prefs.useHeadsetMic ? " · headset mic" : " · phone mic"))
-                        .lineLimit(1)
+                    Text(AudioSession.shared.routeName + micNote).lineLimit(1)
                 }
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .padding(.horizontal, 13).padding(.vertical, 7)
