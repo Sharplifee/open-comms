@@ -168,6 +168,10 @@ struct Preferences: Codable {
     /// other is what it is for.
     var courtMode = false
 
+    /// Which end of a coaching session you are on. Changes what is on the
+    /// glass and nothing else — both people hear each other identically.
+    var courtRole: CourtRole = .coach
+
     /// Which skin. Colour only — every screen and control is identical in all
     /// of them, so this can never be the reason something behaves differently.
     var skin: Skin = .dark

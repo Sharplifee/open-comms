@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import UIKit
 import LiveKit
 
 /// The state of the line, and everything that changes it.
@@ -244,6 +245,7 @@ final class LineManager: NSObject, ObservableObject {
             blockedDevices = Set(await Backend.shared.blocked().map(\.device_id))
             applyChosenVolume()
             Cues.opened(store.prefs.soundCues)
+            applyCourtRole()
             startHeartbeat(opened.id)
         } catch {
             await abandon("Couldn't reach the line. Nothing was lost — try again.")
@@ -393,6 +395,8 @@ final class LineManager: NSObject, ObservableObject {
         await room.disconnect()
         AudioSession.shared.deactivate()
         squad = nil; members = []; openedAt = nil; micLive = false; connecting = false
+        Speaker.shared.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
         // Leaving a line means giving the audio system back. Holding a
         // playAndRecord session open after the last person has gone keeps
         // everybody else's audio sharing our configuration for no reason.
@@ -435,59 +439,54 @@ final class LineManager: NSObject, ObservableObject {
 
     // MARK: - Court mode
 
-    /// The last signal a partner sent, and when. The view shows it for a few
-    /// seconds and then lets it go — a signal is about the next point, not
+    /// The last thing that arrived from the other end, and when. Shown large
+    /// for a few seconds and then let go — a cue is about the next ball, not
     /// something to keep.
-    @Published private(set) var lastSignal: (signal: PartnerSignal, at: Date)?
-    /// The score both phones agree on.
-    @Published var score = MatchScore()
+    @Published private(set) var lastCue: (text: String, at: Date)?
 
-    /// Tell your partner something without saying it out loud.
+    /// The two roles genuinely differ in one way that is not on the screen.
     ///
-    /// It lands as a haptic and a spoken label in their ear, which is the
-    /// point: your opponents cannot see a hand behind a back if there is no
-    /// hand, and neither of you has to have agreed what a fist means.
-    func send(_ signal: PartnerSignal) {
-        Haptics.tap(.rigid)
-        guard squad != nil else { return }
-        Task {
-            try? await room.localParticipant.publish(
-                data: Data("signal:\(signal.rawValue)".utf8),
-                options: DataPublishOptions(topic: LineManager.courtTopic, reliable: true))
-        }
+    /// A coach holds the phone and taps it every few balls, so it must not
+    /// lock between cues — nothing is worse than waking a phone to say "split
+    /// step". A player's phone is in a bag by the net post and should be left
+    /// to sleep, because an hour of an awake screen in a bag is an hour of
+    /// battery for nothing.
+    func applyCourtRole() {
+        let coaching = store.prefs.courtMode && store.prefs.courtRole == .coach && squad != nil
+        UIApplication.shared.isIdleTimerDisabled = coaching
     }
 
-    /// Keep both scoreboards the same. Whoever taps is right; the other phone
-    /// follows. Arguing about which device is authoritative is not worth a
-    /// single point.
-    func shareScore() {
-        guard squad != nil, let data = try? JSONEncoder().encode(score) else { return }
+    /// Say something to the other end without either of you breaking stride.
+    ///
+    /// It arrives three ways at once because a court is a bad place to rely
+    /// on any one of them: spoken into their ear, felt as a buzz, and written
+    /// large on the screen if they happen to look. A player forty feet away
+    /// with a ball machine running gets the words; a coach who has just been
+    /// answered gets the buzz.
+    func speak(_ text: String) {
+        guard squad != nil else { return }
+        Haptics.tap(.rigid)
         Task {
             try? await room.localParticipant.publish(
-                data: Data("score:".utf8) + data,
+                data: Data("say:\(text)".utf8),
                 options: DataPublishOptions(topic: LineManager.courtTopic, reliable: true))
         }
     }
 
     fileprivate func receiveCourt(_ data: Data) {
         let text = String(decoding: data, as: UTF8.self)
-        if text.hasPrefix("signal:") {
-            let raw = String(text.dropFirst("signal:".count))
-            guard let signal = PartnerSignal(rawValue: raw) else { return }
-            lastSignal = (signal, Date())
-            // Two taps, so it is distinguishable from every other buzz the
-            // phone makes during a match.
+        guard text.hasPrefix("say:") else { return }
+        let words = String(text.dropFirst(4))
+        guard !words.isEmpty else { return }
+        lastCue = (words, Date())
+        // Two short taps: unmistakably this app, and distinguishable from
+        // every other buzz a phone makes during a session.
+        Haptics.tap(.rigid)
+        Task {
+            try? await Task.sleep(for: .milliseconds(110))
             Haptics.tap(.rigid)
-            Task {
-                try? await Task.sleep(for: .milliseconds(120))
-                Haptics.tap(.rigid)
-            }
-            Cues.joined(store.prefs.soundCues)
-        } else if text.hasPrefix("score:") {
-            let payload = data.dropFirst("score:".count)
-            guard let incoming = try? JSONDecoder().decode(MatchScore.self, from: Data(payload)) else { return }
-            score = incoming
         }
+        Speaker.shared.say(words)
     }
 
     /// Push the sensitivity slider into the running detector.

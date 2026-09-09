@@ -100,7 +100,7 @@ struct AudioView: View {
                 section("MODE")
                 card {
                     toggle("Court mode",
-                           "Swaps Home for a tennis screen: the score, silent signals to your partner, and which side you're on. Same line, same audio, same people underneath.",
+                           "Swaps Home for a coaching screen: one tap sends a short instruction that is spoken in the other person's ear and buzzed on their phone. Same line, same audio, same people underneath.",
                            $store.prefs.courtMode)
                 }
 

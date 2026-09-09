@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// Court mode. Not a skin — a different app for a different job.
+/// Court mode: a coaching session, not a scoreboard.
 ///
-/// On a doubles court the radar is meaningless: your partner is eight feet
-/// away and you can see them. What you cannot do is talk to them without the
-/// other pair hearing, or agree a poach without a hand behind your back, or
-/// remember the score after a long game. So this screen throws away the
-/// discovery half of the app and gives the space to the three things that are
-/// actually hard on court: the score, the silent signal, and the line itself.
+/// Coaching happens at forty feet with a ball machine running. The coach ends
+/// up shouting the same eight phrases all afternoon, the player hears half of
+/// them, and both lose the thread — and the player cannot answer without
+/// walking to the net. So this screen is built around one idea: say the thing
+/// once, quietly, and have it arrive.
 ///
-/// Everything underneath is the same app. Same line, same codes, same audio
-/// settings, same people. Only what is on the glass changes.
+/// A tap sends words that are spoken into the other person's ear, felt as a
+/// buzz, and written large on their screen. The line stays open underneath for
+/// everything longer than three words, which is what a voice is for.
 struct CourtView: View {
     @EnvironmentObject private var line: LineManager
     @EnvironmentObject private var store: Store
@@ -19,7 +19,7 @@ struct CourtView: View {
     @State private var creating = false
     @State private var showKeypad = false
     @State private var leaving = false
-    @State private var flash: PartnerSignal?
+    @State private var flash: String?
 
     var body: some View {
         ZStack {
@@ -27,35 +27,34 @@ struct CourtView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     header
-                    scoreboard
-                    if line.squad != nil {
-                        signals
-                        courtDiagram
+                    if line.squad == nil {
+                        openStrip
+                    } else {
+                        roleSwitch
+                        if store.prefs.courtRole == .coach { coachDeck } else { playerDeck }
                         micStrip
-                        Button("Leave the line") { leaving = true }
+                        Button("Leave the session") { leaving = true }
                             .buttonStyle(QuietButton())
                             .padding(.horizontal, 20).padding(.top, 16)
-                    } else {
-                        openStrip
                     }
                 }
                 .padding(.bottom, 28)
             }
-            if let flash { signalFlash(flash) }
+            if let flash { cueFlash(flash) }
         }
         .background(Theme.base.ignoresSafeArea())
         .sheet(isPresented: $creating) { CodeKeypad(mode: .create) }
         .sheet(isPresented: $showKeypad) { CodeKeypad(mode: .join) }
-        .confirmationDialog("Leave this line?", isPresented: $leaving, titleVisibility: .visible) {
+        .confirmationDialog("Leave this session?", isPresented: $leaving, titleVisibility: .visible) {
             Button("End for both", role: .destructive) { Task { await line.endForEveryone() } }
             Button("Just leave") { Task { await line.leave() } }
             Button("Cancel", role: .cancel) {}
         }
-        .onChange(of: line.lastSignal?.at) { _, _ in
-            guard let signal = line.lastSignal?.signal else { return }
-            withAnimation(.spring(duration: 0.25)) { flash = signal }
+        .onChange(of: line.lastCue?.at) { _, _ in
+            guard let text = line.lastCue?.text else { return }
+            withAnimation(.spring(duration: 0.22)) { flash = text }
             Task {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(2.4))
                 withAnimation { flash = nil }
             }
         }
@@ -64,213 +63,174 @@ struct CourtView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("COURT").font(.system(size: 12, weight: .bold, design: .rounded)).kerning(2)
                     .foregroundStyle(Theme.signal)
-                Text(line.squad == nil ? "No line open" : "On the line with \(partnerName)")
+                Text(line.squad == nil ? "No session open" : "With \(otherName)")
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.text)
             }
             Spacer()
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) { store.prefs.courtMode = false }
+                line.applyCourtRole()
                 Haptics.tap(.light)
             } label: {
                 Text("Exit court")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 13).padding(.vertical, 7)
-                    .background(Theme.raised.opacity(0.85), in: Capsule())
+                    .background(Theme.raised.opacity(0.9), in: Capsule())
             }
         }
         .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 16)
     }
 
-    private var partnerName: String {
-        line.members.first(where: { !$0.isSelf })?.displayName ?? "your partner"
+    private var otherName: String {
+        line.members.first(where: { !$0.isSelf })?.displayName ?? "your player"
     }
 
-    // MARK: - Scoreboard
-
-    /// The scoreboard reads like the one on the wall: sets, games, points,
-    /// server marked with a ball. Tapping a side adds a point to it, because
-    /// on court you have one hand free and about a second to do it.
-    private var scoreboard: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                sideColumn(0, "US")
-                Rectangle().fill(Theme.line).frame(width: 1)
-                sideColumn(1, "THEM")
+    /// Which end you are on. It changes what is on the glass and nothing else —
+    /// both people hear each other exactly the same way either way.
+    private var roleSwitch: some View {
+        HStack(spacing: 0) {
+            ForEach(CourtRole.allCases) { role in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { store.prefs.courtRole = role }
+                    line.applyCourtRole()
+                    Haptics.select()
+                } label: {
+                    Text(role.title)
+                        .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .foregroundStyle(store.prefs.courtRole == role ? Theme.onSignal : Theme.text)
+                        .background(store.prefs.courtRole == role ? Theme.signal : .clear,
+                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
-            .frame(height: 132)
-
-            HStack(spacing: 18) {
-                Button {
-                    line.score.undoPoint(line.score.points[0] >= line.score.points[1] ? 0 : 1)
-                    line.shareScore(); Haptics.select()
-                } label: { smallControl("Undo point", "arrow.uturn.backward") }
-
-                Button {
-                    line.score.server = 1 - line.score.server
-                    line.shareScore(); Haptics.select()
-                } label: { smallControl("Change server", "arrow.left.arrow.right") }
-
-                Button {
-                    line.score.reset(); line.shareScore(); Haptics.tap()
-                } label: { smallControl("New match", "arrow.counterclockwise") }
-            }
-            .padding(.vertical, 14)
         }
-        .background(Theme.surface.opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-            .stroke(Theme.line, lineWidth: 1))
+        .padding(3)
+        .background(Theme.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .padding(.horizontal, 20)
     }
 
-    private func sideColumn(_ side: Int, _ title: String) -> some View {
-        Button {
-            line.score.point(to: side)
-            line.shareScore()
-            Haptics.tap()
-        } label: {
-            VStack(spacing: 6) {
-                HStack(spacing: 6) {
-                    if line.score.server == side {
-                        Circle().fill(Theme.signal).frame(width: 8, height: 8)
-                    }
-                    Text(title).font(.system(size: 11, weight: .bold, design: .rounded)).kerning(1.5)
-                        .foregroundStyle(Theme.muted)
-                }
-                Text(line.score.display(side))
-                    .font(.system(size: 52, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.text)
-                Text("\(line.score.sets[side]) · \(line.score.games[side])")
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.muted)
+    // MARK: - Coach
+
+    private var coachDeck: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            deck("CORRECTIONS", CoachCue.allCases.filter(\.isTechnical)) { cue in
+                line.speak(cue.spoken)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func smallControl(_ title: String, _ symbol: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 13, weight: .semibold))
-            Text(title).font(.system(size: 10, weight: .semibold, design: .rounded))
-        }
-        .foregroundStyle(Theme.muted)
-    }
-
-    // MARK: - Signals
-
-    /// The reason this mode exists. One tap, and it arrives in your partner's
-    /// ear and on their wrist — no hand behind the back, and nothing for the
-    /// other pair to read.
-    private var signals: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("SIGNAL YOUR PARTNER")
-                .font(.system(size: 11, weight: .bold, design: .rounded)).kerning(1.5)
+            deck("THE SESSION", CoachCue.allCases.filter { !$0.isTechnical }) { cue in
+                line.speak(cue.spoken)
+            }
+            Text("Say anything longer out loud — they can hear you the whole time.")
+                .font(.system(size: 12, design: .rounded))
                 .foregroundStyle(Theme.muted)
-                .padding(.horizontal, 20)
-
-            LazyVGrid(columns: Array(repeating: GridItem(spacing: 10), count: 3), spacing: 10) {
-                ForEach(PartnerSignal.allCases.filter(\.isPreServe)) { signal in
-                    Button { line.send(signal) } label: { signalTile(signal) }
-                        .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 20)
-
-            HStack(spacing: 10) {
-                ForEach(PartnerSignal.allCases.filter { !$0.isPreServe }) { signal in
-                    Button { line.send(signal) } label: { signalTile(signal, wide: true) }
-                        .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 20)
+                .padding(.horizontal, 22)
         }
         .padding(.top, 20)
     }
 
-    private func signalTile(_ signal: PartnerSignal, wide: Bool = false) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: signal.symbol).font(.system(size: 17, weight: .semibold))
-            Text(signal.label).font(.system(size: 12, weight: .bold, design: .rounded))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, wide ? 16 : 14)
-        .foregroundStyle(wide ? Theme.onSignal : Theme.text)
-        .background(wide ? Theme.signal : Theme.surface.opacity(0.92),
-                    in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
-            .stroke(wide ? .clear : Theme.line, lineWidth: 1))
-    }
-
-    private func signalFlash(_ signal: PartnerSignal) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: signal.symbol).font(.system(size: 44, weight: .bold))
-            Text(signal.label.uppercased())
-                .font(.system(size: 30, weight: .bold, design: .rounded)).kerning(1)
-        }
-        .foregroundStyle(Theme.onSignal)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.signal.opacity(0.94).ignoresSafeArea())
-        .transition(.opacity)
-        .allowsHitTesting(false)
-        .accessibilityLabel("Partner signalled \(signal.label)")
-    }
-
-    // MARK: - Court diagram
-
-    /// Which side you are standing on, for the moment somebody forgets whether
-    /// they are serving from deuce or ad. Tap to swap.
-    private var courtDiagram: some View {
-        Button {
-            line.score.onDeuceSide.toggle(); line.shareScore(); Haptics.select()
-        } label: {
-            VStack(spacing: 8) {
-                Canvas { context, size in
-                    let w = size.width, h = size.height
-                    let court = CGRect(x: w * 0.12, y: 6, width: w * 0.76, height: h - 12)
-                    context.stroke(Path(court), with: .color(Theme.line), lineWidth: 1.5)
-                    // service line and centre line: enough court to read at a
-                    // glance, not a diagram of the rulebook
-                    var lines = Path()
-                    lines.move(to: CGPoint(x: court.minX, y: court.midY))
-                    lines.addLine(to: CGPoint(x: court.maxX, y: court.midY))
-                    lines.move(to: CGPoint(x: court.midX, y: court.minY))
-                    lines.addLine(to: CGPoint(x: court.midX, y: court.midY))
-                    context.stroke(lines, with: .color(Theme.line.opacity(0.8)), lineWidth: 1)
-
-                    let box = line.score.onDeuceSide
-                        ? CGRect(x: court.midX, y: court.minY, width: court.width / 2, height: court.height / 2)
-                        : CGRect(x: court.minX, y: court.minY, width: court.width / 2, height: court.height / 2)
-                    context.fill(Path(box), with: .color(Theme.signal.opacity(0.22)))
+    private func deck(_ title: String, _ cues: [CoachCue], action: @escaping (CoachCue) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.system(size: 11, weight: .bold, design: .rounded)).kerning(1.5)
+                .foregroundStyle(Theme.muted).padding(.horizontal, 22)
+            LazyVGrid(columns: Array(repeating: GridItem(spacing: 10), count: 3), spacing: 10) {
+                ForEach(cues) { cue in
+                    Button { action(cue) } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: cue.symbol).font(.system(size: 16, weight: .semibold))
+                            Text(cue.label).font(.system(size: 12, weight: .bold, design: .rounded))
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 15)
+                        .foregroundStyle(Theme.text)
+                        .background(Theme.surface.opacity(0.92),
+                                    in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
+                            .stroke(Theme.line, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .frame(height: 96)
-
-                Text(line.score.onDeuceSide ? "You're on the deuce side" : "You're on the ad side")
-                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Theme.muted)
             }
-            .padding(.vertical, 14)
+            .padding(.horizontal, 20)
+        }
+    }
+
+    // MARK: - Player
+
+    /// The player's phone is in a bag by the net post, so this screen assumes
+    /// it will barely be looked at. It says the one thing worth knowing —
+    /// whether the coach can hear you — in type readable from arm's length,
+    /// keeps the last cue on screen, and offers five replies for the moments
+    /// you are actually at the bench.
+    private var playerDeck: some View {
+        VStack(spacing: 18) {
+            VStack(spacing: 8) {
+                Text(line.micLive ? "COACH CAN HEAR YOU" : "YOU'RE MUTED")
+                    .font(.system(size: 13, weight: .bold, design: .rounded)).kerning(1.5)
+                    .foregroundStyle(line.micLive ? Theme.signal : Theme.muted)
+                Text(line.lastCue?.text ?? "Just play — everything they say lands in your ear.")
+                    .font(.system(size: line.lastCue == nil ? 17 : 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.6)
+                    .frame(maxWidth: .infinity, minHeight: 92)
+            }
+            .padding(.horizontal, 18).padding(.vertical, 20)
             .background(Theme.surface.opacity(0.92),
                         in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
                 .stroke(Theme.line, lineWidth: 1))
-            .padding(.horizontal, 20).padding(.top, 20)
+            .padding(.horizontal, 20)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("SAY BACK").font(.system(size: 11, weight: .bold, design: .rounded)).kerning(1.5)
+                    .foregroundStyle(Theme.muted).padding(.horizontal, 22)
+                LazyVGrid(columns: Array(repeating: GridItem(spacing: 10), count: 3), spacing: 10) {
+                    ForEach(PlayerReply.allCases) { reply in
+                        Button { line.speak(reply.spoken) } label: {
+                            VStack(spacing: 6) {
+                                Image(systemName: reply.symbol).font(.system(size: 16, weight: .semibold))
+                                Text(reply.label).font(.system(size: 12, weight: .bold, design: .rounded))
+                            }
+                            .frame(maxWidth: .infinity).padding(.vertical, 15)
+                            .foregroundStyle(Theme.text)
+                            .background(Theme.surface.opacity(0.92),
+                                        in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
+                                .stroke(Theme.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.top, 20)
+    }
+
+    private func cueFlash(_ text: String) -> some View {
+        VStack(spacing: 12) {
+            Text(text.uppercased())
+                .font(.system(size: 40, weight: .bold, design: .rounded)).kerning(0.5)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.5)
+                .padding(.horizontal, 30)
+        }
+        .foregroundStyle(Theme.onSignal)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.signal.opacity(0.95).ignoresSafeArea())
+        .transition(.opacity)
+        .allowsHitTesting(false)
+        .accessibilityLabel(text)
     }
 
     // MARK: - Mic and opening
 
-    /// One line, one control. The full meter lives in Audio; on court you only
-    /// need to know whether you are open and be able to close it fast.
     private var micStrip: some View {
         HStack(spacing: 14) {
             Button { line.setMic(!line.micLive) } label: {
@@ -309,7 +269,7 @@ struct CourtView: View {
                         Avatar(text: peer.initials)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(peer.displayName).font(.system(size: 15.5, weight: .bold, design: .rounded))
-                            Text("Right here — tap to open the line")
+                            Text("Right here — tap to open the session")
                                 .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.signal)
                         }
                         Spacer()
@@ -322,67 +282,53 @@ struct CourtView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button("Open a line") { creating = true }.buttonStyle(PrimaryButton(hot: true))
+            Button("Open a session") { creating = true }.buttonStyle(PrimaryButton(hot: true))
             Button("Join with a code") { showKeypad = true }.buttonStyle(QuietButton())
+            Text("Open it once at the start. Nobody touches a phone again until you're done.")
+                .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center).padding(.top, 4)
         }
         .padding(.horizontal, 20).padding(.top, 22)
     }
 }
 
-/// The stadium behind everything.
+/// The stadium behind everything, rotating.
 ///
-/// Drawn rather than photographed: a photograph of a real venue is somebody
-/// else's property, and a court that is drawn scales to every screen and tints
-/// itself with the skin. Drop an image named "CourtBackdrop" into the asset
-/// catalogue and it is used instead — the shape below is what shows until
-/// then.
+/// Four courts, and which one you get depends on the day — the same session on
+/// consecutive afternoons does not look identical, and nobody had to choose.
+/// It cross-fades on appear rather than cutting, and it is dimmed hard: the
+/// photograph is atmosphere, and every word on top of it has to stay readable
+/// in direct sun.
 struct CourtBackdrop: View {
+    private static let courts = ["CourtGrass", "CourtClay", "CourtDusk", "CourtNight"]
+
+    /// Rotates by day, then by which hour you opened it — so it changes, but
+    /// never mid-session while somebody is looking at it.
+    @State private var name: String = {
+        let day = Calendar.current.ordinality(of: .day, in: .era, for: Date()) ?? 0
+        let hour = Calendar.current.component(.hour, from: Date())
+        return courts[(day * 2 + hour / 12) % courts.count]
+    }()
+    @State private var shown = false
+
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                if UIImage(named: "CourtBackdrop") != nil {
-                    Image("CourtBackdrop")
-                        .resizable().scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .overlay(Theme.base.opacity(0.72))
-                } else {
-                    LinearGradient(colors: [Theme.base, Theme.surface, Theme.base],
+        ZStack {
+            Theme.base
+            Image(name)
+                .resizable()
+                .scaledToFill()
+                .opacity(shown ? 1 : 0)
+                .overlay(
+                    // Two layers: a flat dim for legibility, and a gradient
+                    // that goes heavier at the bottom where the controls are
+                    // and lighter at the top where the sky earns its place.
+                    LinearGradient(colors: [Theme.base.opacity(0.62), Theme.base.opacity(0.88)],
                                    startPoint: .top, endPoint: .bottom)
-                    Canvas { context, size in
-                        // A show court seen from the far corner: the bowl, the
-                        // lit surface, the lines converging. Enough to feel
-                        // like a stadium at a glance and quiet enough to read
-                        // a scoreboard over.
-                        let w = size.width, h = size.height
-                        var bowl = Path()
-                        bowl.move(to: CGPoint(x: 0, y: h * 0.18))
-                        bowl.addQuadCurve(to: CGPoint(x: w, y: h * 0.18),
-                                          control: CGPoint(x: w / 2, y: -h * 0.06))
-                        bowl.addLine(to: CGPoint(x: w, y: 0))
-                        bowl.addLine(to: CGPoint(x: 0, y: 0))
-                        bowl.closeSubpath()
-                        context.fill(bowl, with: .color(Theme.raised.opacity(0.55)))
-
-                        var surface = Path()
-                        surface.move(to: CGPoint(x: w * 0.18, y: h * 0.30))
-                        surface.addLine(to: CGPoint(x: w * 0.82, y: h * 0.30))
-                        surface.addLine(to: CGPoint(x: w * 1.12, y: h * 0.92))
-                        surface.addLine(to: CGPoint(x: -w * 0.12, y: h * 0.92))
-                        surface.closeSubpath()
-                        context.fill(surface, with: .color(Theme.signal.opacity(0.05)))
-                        context.stroke(surface, with: .color(Theme.line.opacity(0.45)), lineWidth: 1)
-
-                        var service = Path()
-                        service.move(to: CGPoint(x: w * 0.08, y: h * 0.66))
-                        service.addLine(to: CGPoint(x: w * 0.92, y: h * 0.66))
-                        service.move(to: CGPoint(x: w * 0.5, y: h * 0.30))
-                        service.addLine(to: CGPoint(x: w * 0.5, y: h * 0.92))
-                        context.stroke(service, with: .color(Theme.line.opacity(0.35)), lineWidth: 1)
-                    }
-                }
-            }
-            .ignoresSafeArea()
+                )
+                .animation(.easeOut(duration: 0.5), value: shown)
         }
+        .ignoresSafeArea()
+        .onAppear { shown = true }
+        .accessibilityHidden(true)
     }
 }
