@@ -72,9 +72,16 @@ targets:
         NSAppleMusicUsageDescription: >-
           Turns your music down while somebody is talking and puts it back
           where it was afterwards.
+        # Bonjour service types must be declared or iOS blocks the discovery
+        # outright on iOS 14+, and it fails silently — the browser simply
+        # never finds anybody.
+        NSBonjourServices:
+          - _opencomms._tcp
+          - _opencomms._udp
         NSLocalNetworkUsageDescription: >-
-          Connects voice directly between phones on the same network, which
-          keeps the line quick.
+          Finds other phones running OpenComms right next to you, so you can
+          open a line without typing a code, and connects voice directly
+          between phones on the same network.
         # This app never opens a camera, but LiveKit links Apple's camera
         # capture APIs and Apple scans the binary rather than the code path.
         # Without the string the upload is rejected ITMS-90683. Learned the

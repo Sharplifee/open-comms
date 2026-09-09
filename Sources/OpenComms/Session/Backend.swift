@@ -162,7 +162,13 @@ actor Backend {
     /// returns the squad and the token together.
     func openLine(code: String, creating: Bool, name: String,
                   displayName: String) async throws -> OpenResult {
-        var request = URLRequest(url: URL(string: "\(Config.supabaseURL)/functions/v1/open-line")!)
+        // A misconfigured build would otherwise crash here rather than
+        // saying it is misconfigured. Config is injected at build time, and
+        // it has been empty before.
+        guard let url = URL(string: "\(Config.supabaseURL)/functions/v1/open-line") else {
+            throw BackendError.notConfigured
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -199,7 +205,10 @@ actor Backend {
     /// The token is minted server side and the API secret never ships inside
     /// the app, where anybody could pull it out of the binary.
     func livekitToken(squadID: String, displayName: String) async throws -> String {
-        var request = URLRequest(url: URL(string: "\(Config.supabaseURL)/functions/v1/mint-livekit-token")!)
+        guard let url = URL(string: "\(Config.supabaseURL)/functions/v1/mint-livekit-token") else {
+            throw BackendError.notConfigured
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -228,7 +237,10 @@ actor Backend {
     }
 
     private func post(_ function: String, _ body: [String: Any]) async throws -> Data {
-        var request = URLRequest(url: URL(string: "\(Config.supabaseURL)/rest/v1/rpc/\(function)")!)
+        guard let url = URL(string: "\(Config.supabaseURL)/rest/v1/rpc/\(function)") else {
+            throw BackendError.notConfigured
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -250,6 +262,11 @@ enum BackendError: Error {
     case noResponse
     case server(Int)
     case tokenRefused
+    /// The build shipped without its backend configuration. This has happened
+    /// before — CI regenerated Info.plist after injecting the keys and wiped
+    /// them — and it presented as the app hanging rather than as anything
+    /// anybody could diagnose.
+    case notConfigured
 }
 
 // MARK: - Row shapes

@@ -10,6 +10,7 @@ struct HomeView: View {
     @EnvironmentObject private var store: Store
     @StateObject private var nearby = NearbyEngine.shared
     @StateObject private var net = Reachability.shared
+    @StateObject private var peers = PeerDiscovery.shared
 
     @State private var showKeypad = false
     @State private var creating = false
@@ -65,13 +66,42 @@ struct HomeView: View {
         // does that. The meter runs when the person taps it, or when a line
         // is open.
         .onDisappear { line.stopListeningOnly() }
+        .onAppear { peers.start() }
+        .onChange(of: store.prefs.displayName) { _, _ in peers.refresh() }
+        .alert("Talk to \(peers.invitation?.from ?? "them")?",
+               isPresented: Binding(get: { peers.invitation != nil },
+                                    set: { if !$0 { peers.invitation = nil } })) {
+            Button("Join") {
+                if let code = peers.invitation?.code { Task { await line.join(code: code) } }
+                peers.invitation = nil
+            }
+            Button("Not now", role: .cancel) { peers.invitation = nil }
+        } message: {
+            Text("They're right next to you and just opened a line.")
+        }
         .onChange(of: store.prefs.radiusIndex) { _, _ in nearby.rangeChanged() }
         .onChange(of: store.prefs.sensitivity) { _, _ in line.applySensitivity() }
         .onChange(of: store.prefs.theirVolume) { _, _ in line.applyChosenVolume() }
         .onChange(of: store.prefs.visibility) { _, option in
             Task { await Backend.shared.setHidden(option == .hidden) }
             if option == .hidden { nearby.stop() } else { nearby.start() }
+            // Hidden has to mean hidden on every radio, not just the one that
+            // goes through the server. Somebody who turned this on and still
+            // showed up on the phone next to them would be right to call it
+            // broken.
+            peers.refresh()
         }
+    }
+
+    /// One tap: open a line and hand the code to the person standing there.
+    ///
+    /// They do not type anything and neither do you. This is the path for
+    /// somebody who has just installed the app and does not want to learn how
+    /// it works — which is most people, most of the time.
+    private func openWith(_ peer: NearbyPeer) {
+        let code = String(format: "%03d", Int.random(in: 100...999))
+        peers.invite(peer, toCode: code)
+        Task { await line.open(code: code, name: peer.displayName) }
     }
 
     private var failureBinding: Binding<Bool> {
@@ -137,6 +167,38 @@ struct HomeView: View {
                 if line.isListening { line.stopListeningOnly() } else { line.startListeningOnly() }
             }
                 .padding(.horizontal, 20).padding(.top, 14)
+
+            if !peers.peers.isEmpty {
+                listHead("Right here", "\(peers.peers.count)", dot: true)
+                Text("Found over Bluetooth and Wi-Fi. No code, no setup — just tap them.")
+                    .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.muted)
+                    .padding(.horizontal, 20).padding(.bottom, 10)
+                ForEach(peers.peers) { peer in
+                    Button { openWith(peer) } label: {
+                        HStack(spacing: 13) {
+                            Avatar(text: peer.initials)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(peer.displayName)
+                                    .font(.system(size: 15.5, weight: .bold, design: .rounded))
+                                Text("Right next to you").font(.system(size: 12, design: .rounded))
+                                    .foregroundStyle(Theme.signal)
+                            }
+                            Spacer()
+                            Text("Talk")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(Theme.onSignal)
+                                .padding(.horizontal, 16).padding(.vertical, 9)
+                                .background(Theme.signal, in: Capsule())
+                        }
+                        .padding(EdgeInsets(top: 13, leading: 14, bottom: 13, trailing: 14))
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Theme.signal.opacity(0.4), lineWidth: 1))
+                        .padding(.horizontal, 20).padding(.bottom, 9)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
 
             if !store.saved.isEmpty {
                 listHead("Your squads", "\(store.saved.count)")

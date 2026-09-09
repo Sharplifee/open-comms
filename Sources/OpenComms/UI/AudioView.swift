@@ -109,6 +109,7 @@ struct AudioView: View {
                                 store.prefs.visibility = option
                                 Task { await Backend.shared.setHidden(option == .hidden) }
                                 if option == .hidden { nearby.stop() } else { nearby.start() }
+                                PeerDiscovery.shared.refresh()
                             }
                         }
                     }

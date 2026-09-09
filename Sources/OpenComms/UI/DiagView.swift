@@ -10,6 +10,7 @@ struct DiagView: View {
     @EnvironmentObject private var store: Store
     @StateObject private var net = Reachability.shared
     @StateObject private var nearby = NearbyEngine.shared
+    @StateObject private var peers = PeerDiscovery.shared
     @State private var copied = false
     @State private var now = Date()
 
@@ -30,6 +31,8 @@ struct DiagView: View {
                     row("Line", connectionText, line.squad == nil ? .idle : .good)
                     row("On the line", "\(line.members.count) of 8", line.members.isEmpty ? .idle : .good)
                     row("Nearby", nearby.denied ? "—" : "\(nearby.people.count) in range", .good)
+                    row("Right here", peers.running ? "\(peers.peers.count) over Bluetooth/Wi-Fi" : "Not running",
+                        peers.running ? .good : .idle)
                     row("Background", "audio", .good)
                     row("Wake on push", "standard · tap to rejoin", .good)
                     row("Version", version, .good)
@@ -108,6 +111,7 @@ struct DiagView: View {
         line: \(connectionText)
         members: \(line.members.count)
         nearby: \(nearby.people.count)
+        right here: \(peers.running ? String(peers.peers.count) : "not running")
         visibility: \(store.prefs.visibility.rawValue)
         """
         copied = true
