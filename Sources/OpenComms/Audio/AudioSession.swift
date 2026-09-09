@@ -21,6 +21,7 @@ final class AudioSession {
     static let shared = AudioSession()
     private let session = AVAudioSession.sharedInstance()
     private var configured = false
+    private var observing = false
 
     private init() {}
 
@@ -44,7 +45,12 @@ final class AudioSession {
             // is wrong, which is why the category is always set first.
             try session.setActive(true)
             configured = true
-            observe()
+            // Once, not on every configure. This is called again after every
+            // deactivate, interruption and media services reset, and each of
+            // those was adding another copy of every observer — so a single
+            // route change ran the handler as many times as the session had
+            // ever been configured.
+            if !observing { observe(); observing = true }
             Log.audio.info("audio session ready on \(self.routeName)")
         } catch {
             Log.audio.error("audio session failed: \(error.localizedDescription)")
@@ -136,6 +142,10 @@ final class AudioSession {
                 // session must be rebuilt when the call ends.
                 break
             case .ended:
+                // Only come back if the session was ours to begin with.
+                // Reactivating after an interruption the app was not part of
+                // would take audio away from whatever is playing now.
+                guard self.configured else { break }
                 self.configured = false
                 self.configure()
             @unknown default: break
@@ -143,7 +153,7 @@ final class AudioSession {
         }
         centre.addObserver(forName: AVAudioSession.routeChangeNotification,
                            object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
+            guard let self, self.configured else { return }
             // AirPods in or out changes which mode is correct.
             try? self.session.setCategory(.playAndRecord, mode: self.modeForCurrentRoute(),
                                           options: [.mixWithOthers, .allowBluetooth,
@@ -152,8 +162,9 @@ final class AudioSession {
         }
         centre.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification,
                            object: nil, queue: .main) { [weak self] _ in
-            self?.configured = false
-            self?.configure()
+            guard let self, self.configured else { return }
+            self.configured = false
+            self.configure()
         }
     }
 }

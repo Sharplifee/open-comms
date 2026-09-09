@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AVFoundation
 import LiveKit
 
 /// The state of the line, and everything that changes it.
@@ -109,6 +110,19 @@ final class LineManager: NSObject, ObservableObject {
     /// only when the person asked for it.
     func startListeningOnly() {
         guard squad == nil else { return }
+        // Tapping the mic when permission was refused, or never asked for,
+        // used to do nothing at all — the meter simply stayed dead and there
+        // was no way to tell why. Ask, and say so if the answer is no.
+        guard AVAudioApplication.shared.recordPermission == .granted else {
+            AVAudioApplication.requestRecordPermission { [weak self] granted in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if granted { self.startListeningOnly() }
+                    else { self.say("Microphone is off. Turn it on in Settings to use a line.") }
+                }
+            }
+            return
+        }
         applyNoiseSetting()
         AudioSession.shared.configure()
         detector.threshold = store.prefs.thresholdDB
