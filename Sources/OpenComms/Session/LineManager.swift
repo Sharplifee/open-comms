@@ -25,7 +25,24 @@ final class LineManager: NSObject, ObservableObject {
     @Published private(set) var members: [Member] = []
     @Published private(set) var openedAt: Date?
     @Published var micLive = false
+    /// A line of text at the top of the screen. Set it and it clears itself —
+    /// a banner nothing dismisses is a banner that sits there for the rest of
+    /// the session telling somebody about a thing that finished a minute ago.
+    /// Reconnect messages are the exception and clear on success.
     @Published var banner: String?
+
+    private var bannerTimer: Task<Void, Never>?
+
+    func say(_ message: String, sticky: Bool = false) {
+        banner = message
+        bannerTimer?.cancel()
+        guard !sticky else { return }
+        bannerTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.banner = nil
+        }
+    }
 
     /// Everyone silenced at once, and for how long. Mute All is the version
     /// you undo yourself; Focus is the version that undoes itself, because in
@@ -63,6 +80,7 @@ final class LineManager: NSObject, ObservableObject {
     /// speaks again.
     private var restoreMusic: Task<Void, Never>?
     private var focus: Task<Void, Never>?
+    private var reconnect: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
     private var store: Store { Store.shared }
 
@@ -217,6 +235,42 @@ final class LineManager: NSObject, ObservableObject {
         }
     }
 
+    /// Get the room back after a drop, without disturbing what is on screen.
+    ///
+    /// A pocket, a lift, a dead spot in a basement — the connection goes and
+    /// comes back a few seconds later, and the person should not have to
+    /// notice. Backing off rather than hammering, because a phone with no
+    /// signal retried in a tight loop just burns battery.
+    ///
+    /// Six attempts over about a minute and a half. Past that it is not a blip
+    /// and pretending otherwise wastes the person's time, so the line closes
+    /// and says so.
+    private func beginReconnect(to squad: Squad) {
+        guard reconnect == nil else { return }
+        say("Connection dropped. Reconnecting…", sticky: true)
+        reconnect = Task { [weak self] in
+            for attempt in 0..<6 {
+                try? await Task.sleep(for: .seconds(Double(1 << attempt)))
+                guard let self, !Task.isCancelled, self.phase == .open else { return }
+                guard Reachability.shared.online else { continue }
+                do {
+                    try await self.enterRoom(squad)
+                    self.bannerTimer?.cancel()
+                    self.banner = nil
+                    self.reconnect = nil
+                    Cues.opened(self.store.prefs.soundCues)
+                    return
+                } catch {
+                    Log.audio.info("reconnect attempt \(attempt + 1) failed")
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.reconnect = nil
+            await self.teardown()
+            self.phase = .failed("Lost the line and couldn't get it back. Open it again when you have signal.")
+        }
+    }
+
     /// Used by the reconnect path, which already has a squad and only needs
     /// the room back.
     private func enterRoom(_ squad: Squad) async throws {
@@ -283,6 +337,9 @@ final class LineManager: NSObject, ObservableObject {
         detector.stop()
         restoreMusic?.cancel(); restoreMusic = nil
         focus?.cancel(); focus = nil
+        // Without this, leaving during a reconnect pulled the person straight
+        // back into the line they had just left.
+        reconnect?.cancel(); reconnect = nil
         focusUntil = nil
         mutedEveryone = false
         musicIsYielding = false
@@ -460,7 +517,7 @@ final class LineManager: NSObject, ObservableObject {
         blockedDevices.insert(member.deviceID)
         members.removeAll { $0.deviceID == member.deviceID }
         apply(volume: 0, to: member.deviceID)
-        banner = "\(member.displayName) blocked and reported"
+        say("\(member.displayName) blocked and reported")
     }
 
     private func localSpeech(_ speaking: Bool) {
@@ -524,7 +581,16 @@ final class LineManager: NSObject, ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(45))
                 guard let self else { return }
-                await Backend.shared.heartbeat(squadID: squadID)
+                let alive = await Backend.shared.heartbeat(squadID: squadID)
+                // The end-of-line broadcast only reaches a phone that is
+                // connected. One that was asleep, or briefly offline, would
+                // otherwise sit on a line that no longer exists showing a code
+                // nobody can join. The heartbeat is the backstop.
+                if !alive {
+                    await self.teardown()
+                    self.say("That line has ended.")
+                    return
+                }
                 if self.squad?.isHost == false, self.members.count == 1 {
                     await Backend.shared.claimHost(squadID: squadID)
                 }
@@ -587,15 +653,19 @@ extension LineManager: RoomDelegate {
         Task { @MainActor in
             guard phase == .open else { return }
             await teardown()
-            banner = "The line was closed by whoever opened it"
+            say("The line was closed by whoever opened it")
             Cues.closed(store.prefs.soundCues)
         }
     }
 
     nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
         Task { @MainActor in
-            guard phase == .open else { return }
-            banner = "Connection dropped. Reconnecting…"
+            guard phase == .open, let squad else { return }
+            // This used to set a banner saying "reconnecting…" and then do
+            // nothing at all. The line stayed dead and the message stayed on
+            // screen, which is worse than saying nothing: it told somebody to
+            // keep waiting for a thing that was never going to happen.
+            beginReconnect(to: squad)
         }
     }
 }

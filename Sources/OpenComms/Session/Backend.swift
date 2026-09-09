@@ -57,8 +57,19 @@ actor Backend {
                                        code: row.r_join_code ?? code, isHost: row.r_is_creator))
     }
 
-    func heartbeat(squadID: String) async {
-        _ = try? await rpcVoid("heartbeat", ["p_squad_id": squadID, "p_device_id": DeviceIdentity.id])
+    /// Returns whether the line is still alive. A network failure answers
+    /// true: a phone that cannot reach the server has learned nothing about
+    /// the line, and dropping somebody out of a working session because of one
+    /// missed request would be worse than the problem this exists to solve.
+    func heartbeat(squadID: String) async -> Bool {
+        // `rpc` decodes an array because every other RPC returns rows; a
+        // scalar-returning function answers with the bare value, so this one
+        // decodes it directly.
+        guard let data = try? await post("heartbeat",
+                                         ["p_squad_id": squadID, "p_device_id": DeviceIdentity.id]),
+              let alive = try? JSONDecoder().decode(Bool.self, from: data)
+        else { return true }
+        return alive
     }
 
     func leave(squadID: String) async {
