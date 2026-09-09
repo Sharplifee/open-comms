@@ -47,7 +47,6 @@ final class VoiceDetector: ObservableObject {
     /// Gated to headphones, because routing the microphone to the speaker is
     /// a feedback loop by definition. Changing it rebuilds the graph, which
     /// is why it goes through a function rather than being read live.
-    private let monitor = AVAudioMixerNode()
     var selfMonitorGain: Float = 0 {
         didSet {
             guard abs(oldValue - selfMonitorGain) > 0.001 else { return }
@@ -65,8 +64,8 @@ final class VoiceDetector: ObservableObject {
         // pointer to something that no longer describes the input, and the
         // next buffer takes the process down with it. Rebuild instead.
         observers.append(centre.addObserver(forName: AVAudioSession.routeChangeNotification,
-                                            object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.restartIfRunning() }
+                                            object: nil, queue: .main) { [weak self] note in
+            Task { @MainActor in self?.routeChanged(note) }
         })
 
         // The whole audio server can be restarted out from under an app —
@@ -140,11 +139,14 @@ final class VoiceDetector: ObservableObject {
             retryShortly()
             return
         }
+        lastFormat = (format.sampleRate, format.channelCount)
 
-        connectMonitor(from: input, format: format)
+        connectSidetone(format: format)
 
         if !tapped {
             input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
+                guard let self else { return }
+                self.sidetone.feed(buffer)
                 guard let channel = buffer.floatChannelData?[0] else { return }
                 let frames = Int(buffer.frameLength)
                 guard frames > 0 else { return }
@@ -152,7 +154,7 @@ final class VoiceDetector: ObservableObject {
                 for i in 0..<frames { sum += channel[i] * channel[i] }
                 let rms = sqrt(sum / Float(frames))
                 let db = Double(20 * log10(max(rms, 0.000_001)))
-                Task { @MainActor in self?.consume(db) }
+                Task { @MainActor in self.consume(db) }
             }
             tapped = true
         }
@@ -170,48 +172,83 @@ final class VoiceDetector: ObservableObject {
         }
     }
 
-    /// Self monitoring only exists on headphones. On the speaker the same
-    /// graph is a microphone pointed at a loudspeaker.
-    private func connectMonitor(from input: AVAudioInputNode, format: AVAudioFormat) {
+    /// Sidetone: a little of your own voice in your ear, on headphones only.
+    ///
+    /// Done with a player node fed from the tap rather than by wiring the
+    /// input straight into the mixer. Wiring the input in made the microphone
+    /// part of the render graph, so every route change had to rebuild the
+    /// graph with a mic in it — and a mic mid-format-change inside a running
+    /// graph is precisely the state the engine refuses, by crashing. A player
+    /// node is an ordinary source the graph already knows how to handle, and
+    /// the tap stays a pure observer.
+    ///
+    /// The tap runs on the audio thread, so the feeder is deliberately outside
+    /// the main actor and owns only what that thread needs.
+    private let sidetone = SidetoneFeeder()
+
+    private func connectSidetone(format: AVAudioFormat) {
+        guard sidetone.node.engine == nil else { applySidetoneGain(); return }
+        engine.attach(sidetone.node)
+        engine.connect(sidetone.node, to: engine.mainMixerNode, format: format)
+        applySidetoneGain()
+    }
+
+    private func applySidetoneGain() {
         let onSpeaker = AVAudioSession.sharedInstance().currentRoute.outputs
             .first?.portType == .builtInSpeaker
-        let wanted = selfMonitorGain > 0.001 && !onSpeaker
-
-        guard wanted != monitoring else {
-            if monitoring { monitor.outputVolume = selfMonitorGain }
-            return
-        }
-
-        if wanted {
-            if monitor.engine == nil { engine.attach(monitor) }
-            // Touching mainMixerNode instantiates the output chain, so it is
-            // read once here rather than left to happen inside a connect.
-            let output = engine.mainMixerNode
-            engine.connect(input, to: monitor, format: format)
-            engine.connect(monitor, to: output, format: format)
-            monitor.outputVolume = selfMonitorGain
-            monitoring = true
-        } else {
-            if monitor.engine != nil {
-                engine.disconnectNodeInput(monitor)
-                engine.disconnectNodeOutput(monitor)
-            }
-            monitoring = false
-        }
+        let gain = onSpeaker ? 0 : selfMonitorGain
+        sidetone.node.volume = gain
+        sidetone.enabled = gain > 0.001
+        monitoring = sidetone.enabled
     }
 
     private func rebuildMonitorIfNeeded() {
-        guard isListening else { return }
-        restartIfRunning()
+        // Gain is a property on a live node; no rebuild needed.
+        applySidetoneGain()
+    }
+
+    /// Only restart for a route change that actually changed the hardware.
+    ///
+    /// Route-change notifications fire for far more than headphones going in
+    /// or out: the app's own category change posts one, activation posts one,
+    /// and a Bluetooth handshake can post several in a row. Restarting the
+    /// engine on every one of them, while the previous restart was still
+    /// settling, is what made the whole screen stutter and then took the
+    /// process down. So: ignore our own reconfigures, compare the input
+    /// format before and after, and coalesce anything arriving in a burst.
+    private var lastFormat: (rate: Double, channels: UInt32) = (0, 0)
+    private var pendingRestart: Task<Void, Never>?
+
+    private func routeChanged(_ note: Notification) {
+        guard running else { return }
+        guard !AudioSession.shared.justReconfigured else { return }
+        pendingRestart?.cancel()
+        pendingRestart = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self, !Task.isCancelled, self.running else { return }
+            let now = self.engine.inputNode.outputFormat(forBus: 0)
+            let changed = now.sampleRate != self.lastFormat.rate
+                       || now.channelCount != self.lastFormat.channels
+            if changed || !self.engine.isRunning {
+                self.restartIfRunning()
+            } else {
+                // Same hardware, engine still up — nothing to do except make
+                // sure the sidetone rule (headphones only) is still right.
+                self.applySidetoneGain()
+            }
+        }
     }
 
     /// Stop the engine but remember that the meter is meant to be live, so a
     /// route change or an interruption comes back on its own.
     private func restartIfRunning() {
-        guard running else { return }
+        guard running, !restarting else { return }
+        restarting = true
+        defer { restarting = false }
         teardownEngine()
         startEngine()
     }
+    private var restarting = false
 
     private func suspend() {
         guard isListening else { return }
@@ -224,6 +261,7 @@ final class VoiceDetector: ObservableObject {
     /// configuration, so this one is replaced rather than restarted.
     private func rebuildEngine() {
         teardownEngine()
+        if sidetone.node.engine != nil { engine.detach(sidetone.node) }
         engine = AVAudioEngine()
         monitoring = false
         guard running else { return }
@@ -231,6 +269,8 @@ final class VoiceDetector: ObservableObject {
     }
 
     private func teardownEngine() {
+        retry?.cancel(); retry = nil
+        sidetone.halt()
         if tapped {
             engine.inputNode.removeTap(onBus: 0)
             tapped = false
@@ -239,10 +279,13 @@ final class VoiceDetector: ObservableObject {
         isListening = false
     }
 
+    private var retry: Task<Void, Never>?
+
     private func retryShortly() {
-        Task { [weak self] in
+        retry?.cancel()
+        retry = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
-            guard let self, self.running, !self.isListening else { return }
+            guard let self, !Task.isCancelled, self.running, !self.isListening else { return }
             self.startEngine()
         }
     }
@@ -270,5 +313,27 @@ final class VoiceDetector: ObservableObject {
                 onChange?(false)
             }
         }
+    }
+}
+
+
+/// The part of sidetone the audio thread touches. Kept off the main actor on
+/// purpose: the tap callback cannot hop to main to schedule a buffer — by the
+/// time it got there the buffer would be late and the audio would stutter —
+/// so this holds exactly the state that thread needs and nothing else.
+final class SidetoneFeeder: @unchecked Sendable {
+    let node = AVAudioPlayerNode()
+    /// Written on main, read on the audio thread. A stale read here costs one
+    /// buffer of sidetone in the wrong state, which is inaudible.
+    var enabled = false
+
+    func feed(_ buffer: AVAudioPCMBuffer) {
+        guard enabled, let engine = node.engine, engine.isRunning else { return }
+        if !node.isPlaying { node.play() }
+        node.scheduleBuffer(buffer, completionHandler: nil)
+    }
+
+    func halt() {
+        if node.isPlaying { node.stop() }
     }
 }

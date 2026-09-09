@@ -8,9 +8,9 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var line: LineManager
     @EnvironmentObject private var store: Store
-    @StateObject private var nearby = NearbyEngine.shared
-    @StateObject private var net = Reachability.shared
-    @StateObject private var peers = PeerDiscovery.shared
+    @ObservedObject private var nearby = NearbyEngine.shared
+    @ObservedObject private var net = Reachability.shared
+    @ObservedObject private var peers = PeerDiscovery.shared
 
     @State private var showKeypad = false
     @State private var creating = false

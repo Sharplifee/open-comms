@@ -8,7 +8,7 @@ import SwiftUI
 struct ContactsView: View {
     @EnvironmentObject private var line: LineManager
     @EnvironmentObject private var store: Store
-    @StateObject private var matcher = ContactMatcher.shared
+    @ObservedObject private var matcher = ContactMatcher.shared
     @State private var search = ""
     @State private var creating = false
 

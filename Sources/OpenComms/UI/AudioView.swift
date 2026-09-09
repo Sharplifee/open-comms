@@ -6,7 +6,7 @@ import SwiftUI
 struct AudioView: View {
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var line: LineManager
-    @StateObject private var nearby = NearbyEngine.shared
+    @ObservedObject private var nearby = NearbyEngine.shared
     @FocusState private var editingName: Bool
     @State private var blocked: [BlockedRow] = []
     @State private var confirmingWipe = false

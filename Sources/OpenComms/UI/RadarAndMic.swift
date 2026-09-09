@@ -66,15 +66,13 @@ struct RadarCard: View {
             }
 
             ZStack {
-                // Canvas does not interpolate an animated @State — it just
-                // repaints when the value lands, so `withAnimation` on a sweep
-                // angle drew one frame and stopped. A TimelineView hands the
-                // canvas a fresh timestamp every frame; the angle is computed
-                // from the clock, so it keeps moving for as long as it is on
-                // screen and stops costing anything the moment it is not.
-                TimelineView(.animation(paused: reduceMotion)) { timeline in
-                let sweep = reduceMotion ? 0.0
-                    : (timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period) * 360
+                // Two layers, not one. The rings, labels and crosshairs never
+                // change between range changes, so they are drawn once by a
+                // plain Canvas that SwiftUI caches. Only the sweep sits inside
+                // the TimelineView. The single-layer version re-laid-out four
+                // text labels sixty to a hundred and twenty times a second,
+                // which is what made the whole screen stutter the moment
+                // anything else on it started updating.
                 Canvas { context, size in
                     let centre = CGPoint(x: size.width / 2, y: size.height / 2)
                     let maxR = min(size.width, size.height) / 2 - 12
@@ -99,8 +97,21 @@ struct RadarCard: View {
                     diag.move(to: CGPoint(x: centre.x - d, y: centre.y - d)); diag.addLine(to: CGPoint(x: centre.x + d, y: centre.y + d))
                     diag.move(to: CGPoint(x: centre.x + d, y: centre.y - d)); diag.addLine(to: CGPoint(x: centre.x - d, y: centre.y + d))
                     context.stroke(diag, with: .color(Theme.line.opacity(0.3)), lineWidth: 0.5)
+                    let you = CGRect(x: centre.x - 12, y: centre.y - 12, width: 24, height: 24)
+                    context.fill(Path(ellipseIn: you), with: .color(Theme.text))
+                    context.draw(Text("YOU").font(.system(size: 6, weight: .bold, design: .rounded))
+                                    .foregroundColor(Theme.base), at: centre)
+                }
 
-                    if !reduceMotion {
+                // Thirty frames a second is plenty for a sweep that takes one
+                // to three seconds per revolution, and it is a quarter of the
+                // work of letting the display decide.
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
+                    let sweep = reduceMotion ? 0.0
+                        : (timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period) * 360
+                    Canvas { context, size in
+                        let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+                        let maxR = min(size.width, size.height) / 2 - 12
                         var wedge = Path()
                         wedge.move(to: centre)
                         wedge.addArc(center: centre, radius: maxR,
@@ -113,13 +124,8 @@ struct RadarCard: View {
                                                  y: centre.y + maxR * sin((sweep - 90) * .pi / 180)))
                         context.stroke(edge, with: .color(Theme.signal.opacity(0.26)), lineWidth: 1.2)
                     }
-
-                    let you = CGRect(x: centre.x - 12, y: centre.y - 12, width: 24, height: 24)
-                    context.fill(Path(ellipseIn: you), with: .color(Theme.text))
-                    context.draw(Text("YOU").font(.system(size: 6, weight: .bold, design: .rounded))
-                                    .foregroundColor(Theme.base), at: centre)
                 }
-                }
+                .allowsHitTesting(false)
 
                 GeometryReader { geo in
                     let centre = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
@@ -226,8 +232,8 @@ struct MicCard: View {
                     Text(hasSignal ? "\(Int(detector.decibels.rounded()))" : "—")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .monospacedDigit()
+                        .frame(minWidth: 44, alignment: .trailing)
                         .foregroundStyle(crossing ? Theme.signal : Theme.text)
-                        .contentTransition(.numericText())
                     Text("dB now").font(.system(size: 9, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.muted)
                 }
@@ -247,10 +253,13 @@ struct MicCard: View {
                         .frame(width: max(0, width * (1 - marker)), height: 22)
                         .offset(x: width * marker)
                     // live level
+                    // No implicit animation on the fill. The reading already
+                    // arrives twenty-odd times a second, and animating each
+                    // step on top of that doubles the layout work for a
+                    // smoothness the eye cannot see at that rate.
                     RoundedRectangle(cornerRadius: 6)
                         .fill(crossing ? Theme.signal : Theme.muted)
                         .frame(width: max(0, width * fill), height: 22)
-                        .animation(.linear(duration: 0.05), value: fill)
                     // segment ticks every 5 dB so the scale is readable
                     HStack(spacing: 0) {
                         ForEach(0..<9, id: \.self) { i in

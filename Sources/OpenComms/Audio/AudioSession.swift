@@ -23,11 +23,23 @@ final class AudioSession {
     private var configured = false
     private var observing = false
 
+    /// The moment we last changed the category ourselves. Setting a category
+    /// posts a route-change notification exactly like unplugging headphones
+    /// does, and the app was treating its own configure as an external event:
+    /// configure → route change → restart the engine → engine touches the
+    /// session → route change → restart … Each restart tore down and rebuilt
+    /// the audio graph while the previous one was still settling, which is
+    /// the glitching, and eventually one of those rebuilds hit a node in a
+    /// state AVAudioEngine refuses, which is the crash.
+    private(set) var lastSelfChange = Date.distantPast
+    var justReconfigured: Bool { Date().timeIntervalSince(lastSelfChange) < 1.0 }
+
     private init() {}
 
     func configure() {
         guard !configured else { return }
         do {
+            lastSelfChange = Date()
             try session.setCategory(.playAndRecord,
                                     mode: modeForCurrentRoute(),
                                     options: [.mixWithOthers, .allowBluetooth,
@@ -105,6 +117,7 @@ final class AudioSession {
     func refreshMode() {
         guard configured else { return }
         do {
+            lastSelfChange = Date()
             try session.setCategory(.playAndRecord, mode: modeForCurrentRoute(),
                                     options: [.mixWithOthers, .allowBluetooth,
                                               .allowBluetoothA2DP, .defaultToSpeaker])
@@ -154,10 +167,19 @@ final class AudioSession {
         centre.addObserver(forName: AVAudioSession.routeChangeNotification,
                            object: nil, queue: .main) { [weak self] _ in
             guard let self, self.configured else { return }
-            // AirPods in or out changes which mode is correct.
-            try? self.session.setCategory(.playAndRecord, mode: self.modeForCurrentRoute(),
-                                          options: [.mixWithOthers, .allowBluetooth,
-                                                    .allowBluetoothA2DP, .defaultToSpeaker])
+            // Our own category change arrives here too. Ignore it, or this
+            // handler re-applies the category, which posts another route
+            // change, which lands here again.
+            guard !self.justReconfigured else { return }
+            // AirPods in or out changes which mode is correct — but only
+            // touch the session if the mode actually differs, because
+            // setting the same category again is itself a route change.
+            if self.session.mode != self.modeForCurrentRoute() {
+                self.lastSelfChange = Date()
+                try? self.session.setCategory(.playAndRecord, mode: self.modeForCurrentRoute(),
+                                              options: [.mixWithOthers, .allowBluetooth,
+                                                        .allowBluetoothA2DP, .defaultToSpeaker])
+            }
             NotificationCenter.default.post(name: .audioRouteChanged, object: nil)
         }
         centre.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification,
