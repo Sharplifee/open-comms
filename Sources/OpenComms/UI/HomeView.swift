@@ -128,7 +128,11 @@ struct HomeView: View {
 
                 HStack(spacing: 5) {
                     Circle().fill(AudioSession.shared.onSpeaker ? Theme.muted : Theme.signal).frame(width: 7, height: 7)
-                    Text(AudioSession.shared.routeName).lineLimit(1)
+                    // Output, then which mic. "AirPods Pro · phone mic" says
+                    // exactly what is happening instead of leaving somebody to
+                    // wonder why their AirPods mic seems off.
+                    Text(AudioSession.shared.routeName + (AudioSession.shared.onSpeaker ? "" : store.prefs.useHeadsetMic ? " · headset mic" : " · phone mic"))
+                        .lineLimit(1)
                 }
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .padding(.horizontal, 13).padding(.vertical, 7)

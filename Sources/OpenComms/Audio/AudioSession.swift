@@ -36,14 +36,30 @@ final class AudioSession {
 
     private init() {}
 
+    /// Whether to take the microphone from Bluetooth headphones.
+    ///
+    /// Off by default, and this is the single most important audio decision
+    /// in the app. Using a Bluetooth headset's microphone means the
+    /// hands-free profile, and HFP drops everything the headset plays — the
+    /// music, the podcast, the other person — to telephone quality for as
+    /// long as the mic is open. With it off, AirPods stay on A2DP at full
+    /// quality and the phone's own microphone does the talking, which in a
+    /// pocket or on a bench is quieter but does not wreck anything.
+    var useHeadsetMic = false
+
+    private var options: AVAudioSession.CategoryOptions {
+        var o: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker]
+        if useHeadsetMic { o.insert(.allowBluetooth) }
+        return o
+    }
+
     func configure() {
         guard !configured else { return }
         do {
             lastSelfChange = Date()
             try session.setCategory(.playAndRecord,
                                     mode: modeForCurrentRoute(),
-                                    options: [.mixWithOthers, .allowBluetooth,
-                                              .allowBluetoothA2DP, .defaultToSpeaker])
+                                    options: options)
             try session.setPreferredSampleRate(48_000)
             // 5 ms was chosen for latency, but a buffer that small forces the
             // hardware into a high-rate mode that everything sharing the
@@ -119,8 +135,7 @@ final class AudioSession {
         do {
             lastSelfChange = Date()
             try session.setCategory(.playAndRecord, mode: modeForCurrentRoute(),
-                                    options: [.mixWithOthers, .allowBluetooth,
-                                              .allowBluetoothA2DP, .defaultToSpeaker])
+                                    options: options)
         } catch {
             Log.audio.error("refreshMode failed: \(error.localizedDescription)")
         }
@@ -177,8 +192,7 @@ final class AudioSession {
             if self.session.mode != self.modeForCurrentRoute() {
                 self.lastSelfChange = Date()
                 try? self.session.setCategory(.playAndRecord, mode: self.modeForCurrentRoute(),
-                                              options: [.mixWithOthers, .allowBluetooth,
-                                                        .allowBluetoothA2DP, .defaultToSpeaker])
+                                              options: options)
             }
             NotificationCenter.default.post(name: .audioRouteChanged, object: nil)
         }

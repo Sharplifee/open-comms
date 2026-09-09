@@ -67,6 +67,11 @@ struct AudioView: View {
 
                 section("AUDIO QUALITY")
                 card {
+                    toggle("Use headset mic",
+                           "Talk through your AirPods' mic instead of the phone's. Bluetooth then drops everything you hear to phone-call quality while a line is open.",
+                           $store.prefs.useHeadsetMic)
+                        .onChange(of: store.prefs.useHeadsetMic) { _, _ in line.applyMicSource() }
+                    divider
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Noise suppression").font(.system(size: 15, weight: .semibold, design: .rounded))
                         Text(store.prefs.noise.detail)

@@ -123,6 +123,7 @@ final class LineManager: NSObject, ObservableObject {
             }
             return
         }
+        AudioSession.shared.useHeadsetMic = store.prefs.useHeadsetMic
         applyNoiseSetting()
         AudioSession.shared.configure()
         detector.threshold = store.prefs.thresholdDB
@@ -142,6 +143,18 @@ final class LineManager: NSObject, ObservableObject {
 
     private override init() {
         super.init()
+        // THIS is why nothing done to the audio session ever stuck.
+        //
+        // LiveKit configures AVAudioSession itself the moment its engine
+        // starts — category .playAndRecord with `.allowBluetooth`, which is
+        // the Bluetooth *hands-free* profile, and mode `.voiceChat`. HFP
+        // drops AirPods to telephone-grade mono for EVERYTHING they play, not
+        // just the call. That is the "pushed into a back room" sound: not a
+        // bug in the app's own session code, but LiveKit overwriting that
+        // code every time a line opened. Turned off, so the session is
+        // configured in exactly one place — AudioSession — and stays there.
+        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
+        AudioManager.shared.audioSession.isAutomaticDeactivationEnabled = false
         room.add(delegate: self)
         detector.onChange = { [weak self] speaking in
             guard let self else { return }
@@ -190,6 +203,7 @@ final class LineManager: NSObject, ObservableObject {
 
         // The microphone meter and the audio session do not need the server,
         // so start them while the request is still in flight.
+        AudioSession.shared.useHeadsetMic = store.prefs.useHeadsetMic
         applyNoiseSetting()
         applyMusicPolicy()
         AudioSession.shared.configure()
@@ -290,6 +304,7 @@ final class LineManager: NSObject, ObservableObject {
     private func enterRoom(_ squad: Squad) async throws {
         let token = try await Backend.shared.livekitToken(squadID: squad.id,
                                                           displayName: store.prefs.displayName)
+        AudioSession.shared.useHeadsetMic = store.prefs.useHeadsetMic
         applyNoiseSetting()
         applyMusicPolicy()
         AudioSession.shared.configure()
@@ -451,6 +466,12 @@ final class LineManager: NSObject, ObservableObject {
     /// voice processing, which reshapes the music playing through it too. This
     /// asks LiveKit whether Apple's voice processing may be used for capture
     /// and leaves everybody else's audio alone either way.
+    /// Which microphone, and whether the session gives up music quality for it.
+    func applyMicSource() {
+        AudioSession.shared.useHeadsetMic = store.prefs.useHeadsetMic
+        AudioSession.shared.refreshMode()
+    }
+
     func applyNoiseSetting() {
         do {
             try AudioManager.shared.setPlatformVoiceProcessingAllowed(store.prefs.noise == .high)

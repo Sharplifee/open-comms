@@ -124,8 +124,8 @@ enum NoiseSuppression: String, Codable, CaseIterable {
     case low, high
     var title: String { self == .low ? "Low" : "High" }
     var detail: String {
-        self == .low ? "Software cleanup only. Cleaner if you're somewhere quiet."
-                     : "Apple's voice processing on top. Filters gym noise before it goes out."
+        self == .low ? "Software cleanup. Leaves your music exactly as it was."
+                     : "Apple's voice processing on top. Cleaner mic on the speaker; on headphones it can flatten your music."
     }
 }
 
@@ -135,7 +135,14 @@ struct Preferences: Codable {
     var visibility: Visibility = .visible
     /// −55 dB to −12 dB. Low means a whisper opens the line.
     var sensitivity: Double = 0.55
-    var noise: NoiseSuppression = .high
+    /// Low by default. High hands capture to Apple's voice processing, which
+    /// on headphones can flatten the music sharing the session — it is there
+    /// for people on the speaker, where the echo path makes it worth it.
+    var noise: NoiseSuppression = .low
+    /// Take the mic from Bluetooth headphones. Off by default because it
+    /// forces the hands-free profile, which drops everything the headset
+    /// plays to phone-call quality for as long as the mic is open.
+    var useHeadsetMic = false
     var lowPower = false
     var soundCues = true
     /// Intercom volume — how loud everybody else comes through.
