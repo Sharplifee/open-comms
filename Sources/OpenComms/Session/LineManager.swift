@@ -163,7 +163,11 @@ final class LineManager: NSObject, ObservableObject {
         // uses everywhere else, minus HFP, plus a mode chosen for headphones.
         AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = true
         AudioManager.shared.audioSession.isAutomaticDeactivationEnabled = true
-        AudioManager.shared.audioSession.sessionConfiguration = AudioSession.livekitConfiguration()
+        // sessionConfiguration lives on AudioManager, not on the observer, and
+        // it takes precedence over LiveKit's own dynamic choice. Set on the
+        // manager it is a fixed override; the observer only exposes the
+        // automatic switches.
+        AudioManager.shared.sessionConfiguration = AudioSession.livekitConfiguration()
         room.add(delegate: self)
         detector.onChange = { [weak self] speaking in
             guard let self else { return }
