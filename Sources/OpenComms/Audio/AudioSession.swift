@@ -1,4 +1,5 @@
 import AVFoundation
+import LiveKit
 
 /// The audio session, configured once and then left alone.
 ///
@@ -66,7 +67,7 @@ final class AudioSession {
         session.currentRoute.outputs.contains { $0.portType == .carAudio }
     }
 
-    private var options: AVAudioSession.CategoryOptions {
+    var options: AVAudioSession.CategoryOptions {
         var o: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker]
         // Only ask for HFP when the person has accepted what it costs, and
         // only when Bluetooth is actually the thing playing. Requesting it on
@@ -97,6 +98,24 @@ final class AudioSession {
             return
         }
         try? session.setPreferredInput(port)
+    }
+
+    /// The configuration LiveKit activates the session with.
+    ///
+    /// LiveKit owns activation — it is the only code that knows when its audio
+    /// unit is starting and stopping — but its default configuration asks for
+    /// the Bluetooth hands-free profile, which wrecks headphone quality. So it
+    /// gets ours instead: the same options the rest of the app uses, without
+    /// HFP unless the person asked for it, and a mode chosen for the route.
+    ///
+    /// `.default` on headphones is deliberate and load-bearing. `.voiceChat`
+    /// and `.videoChat` put iOS into a call-tuned gain profile that also makes
+    /// playback noticeably quieter, on top of the processing cost to music.
+    static func livekitConfiguration() -> AudioSessionConfiguration {
+        let shared = AudioSession.shared
+        return AudioSessionConfiguration(category: .playAndRecord,
+                                         categoryOptions: shared.options,
+                                         mode: shared.modeForCurrentRoute())
     }
 
     func configure() {
@@ -170,7 +189,7 @@ final class AudioSession {
     /// whole time a line was open. Headphones stay `.default` and the music
     /// stays untouched, no matter what the noise setting says. Noise cleanup
     /// happens on the microphone instead, where it belongs.
-    private func modeForCurrentRoute() -> AVAudioSession.Mode {
+    func modeForCurrentRoute() -> AVAudioSession.Mode {
         // Voice processing exists to cancel a speaker feeding back into a
         // microphone in the same room. That is true of the phone's speaker and
         // it is true of a car — the car's speakers and the car's mic are a

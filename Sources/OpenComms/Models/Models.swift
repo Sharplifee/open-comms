@@ -168,6 +168,10 @@ struct Preferences: Codable {
     /// other is what it is for.
     var courtMode = false
 
+    /// Whether a line you open is listed for people nearby to find. Off means
+    /// the code is the only way in, which is what two people in a gym want.
+    var publicLine = false
+
     /// Which end of a coaching session you are on. Changes what is on the
     /// glass and nothing else — both people hear each other identically.
     var courtRole: CourtRole = .coach

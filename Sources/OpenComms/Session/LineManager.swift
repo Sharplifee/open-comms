@@ -95,7 +95,10 @@ final class LineManager: NSObject, ObservableObject {
     var talker: Member? { members.first { $0.isSpeaking && !$0.isSelf && !$0.mutedForMe } }
     var level: Double { detector.level }
     var decibels: Double { detector.decibels }
-    var isSpeakingLocally: Bool { detector.speaking }
+    /// Whether you are talking. Off a line that is our own detector; on one it
+    /// is LiveKit's, because by then LiveKit owns the microphone.
+    var isSpeakingLocally: Bool { squad == nil ? detector.speaking : liveSpeaking }
+    @Published private(set) var liveSpeaking = false
 
     /// Runs the meter before any line exists, so the mic card on Home is
     /// honest about how loud you need to be.
@@ -144,18 +147,23 @@ final class LineManager: NSObject, ObservableObject {
 
     private override init() {
         super.init()
-        // THIS is why nothing done to the audio session ever stuck.
+        // LiveKit configures AVAudioSession itself when its engine starts, and
+        // its default asks for `.allowBluetooth` — the Bluetooth hands-free
+        // profile, which drops AirPods to telephone-grade mono for everything
+        // they play. That is the "back room" sound.
         //
-        // LiveKit configures AVAudioSession itself the moment its engine
-        // starts — category .playAndRecord with `.allowBluetooth`, which is
-        // the Bluetooth *hands-free* profile, and mode `.voiceChat`. HFP
-        // drops AirPods to telephone-grade mono for EVERYTHING they play, not
-        // just the call. That is the "pushed into a back room" sound: not a
-        // bug in the app's own session code, but LiveKit overwriting that
-        // code every time a line opened. Turned off, so the session is
-        // configured in exactly one place — AudioSession — and stays there.
-        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
-        AudioManager.shared.audioSession.isAutomaticDeactivationEnabled = false
+        // The previous attempt at this switched LiveKit's session management
+        // OFF entirely. That fixed the quality and broke playback: LiveKit
+        // also uses that path to activate the session for RENDERING, so with
+        // it disabled the microphone still went out and nothing ever came
+        // back — audio going one way, exactly as reported.
+        //
+        // The right answer is to keep LiveKit in charge of activation and
+        // hand it OUR configuration to activate with. Same option set the app
+        // uses everywhere else, minus HFP, plus a mode chosen for headphones.
+        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = true
+        AudioManager.shared.audioSession.isAutomaticDeactivationEnabled = true
+        AudioManager.shared.audioSession.sessionConfiguration = AudioSession.livekitConfiguration()
         room.add(delegate: self)
         detector.onChange = { [weak self] speaking in
             guard let self else { return }
@@ -165,8 +173,60 @@ final class LineManager: NSObject, ObservableObject {
 
     // MARK: - Opening and joining
 
+    /// Everybody waiting to be let onto this line, refreshed while it is open.
+    @Published private(set) var knocking: [RequestRow] = []
+    private var knockWatch: Task<Void, Never>?
+
     func open(code: String, name: String) async {
         await connect(code: code, creating: true, name: name)
+        // A public line has to be marked public and then watched, because from
+        // that moment strangers can ask to get on it.
+        if let squad, store.prefs.publicLine {
+            await Backend.shared.setPublic(squad.id, isPublic: true)
+            watchKnocks(squad.id)
+        }
+    }
+
+    private func watchKnocks(_ squadID: String) {
+        knockWatch?.cancel()
+        knockWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.squad?.id == squadID else { return }
+                self.knocking = await Backend.shared.pendingRequests(squadID)
+                if !self.knocking.isEmpty { Haptics.tap(.light) }
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
+    }
+
+    /// Let somebody in, or turn them away. Yes hands them the code.
+    func answer(_ request: RequestRow, grant: Bool) async {
+        guard let squad else { return }
+        await Backend.shared.answerRequest(squad.id, device: request.device_id, grant: grant)
+        knocking.removeAll { $0.device_id == request.device_id }
+        say(grant ? "\(request.display_name) is on the line" : "Turned \(request.display_name) away")
+    }
+
+    /// Ask to get onto somebody else's public line, then wait for the answer.
+    /// Polling rather than pushing, because a person deciding takes seconds
+    /// and a socket for that would be machinery nobody sees.
+    func knock(on line: PublicLineRow) async {
+        let outcome = await Backend.shared.askToJoin(line.squad_id, displayName: store.prefs.displayName)
+        guard outcome == "asked" else {
+            say(outcome == "rate_limited" ? "Too many tries — give it a moment."
+                                          : "That line isn't open any more.")
+            return
+        }
+        say("Asked \(line.host_name) to let you on")
+        for _ in 0..<45 {
+            try? await Task.sleep(for: .seconds(2))
+            let answer = await Backend.shared.requestAnswer(line.squad_id)
+            if answer == "waiting" { continue }
+            if answer == "denied" { say("\(line.host_name) said no."); return }
+            await join(code: answer)
+            return
+        }
+        say("No answer from \(line.host_name).")
     }
 
     func join(code: String) async {
@@ -396,6 +456,9 @@ final class LineManager: NSObject, ObservableObject {
         AudioSession.shared.deactivate()
         squad = nil; members = []; openedAt = nil; micLive = false; connecting = false
         Speaker.shared.stop()
+        knockWatch?.cancel(); knockWatch = nil
+        knocking = []
+        liveSpeaking = false
         UIApplication.shared.isIdleTimerDisabled = false
         // Leaving a line means giving the audio system back. Holding a
         // playAndRecord session open after the last person has gone keeps
@@ -746,9 +809,14 @@ extension LineManager: RoomDelegate {
     nonisolated func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) {
         Task { @MainActor in
             let speaking = Set(participants.compactMap { $0.identity?.stringValue })
-            for index in members.indices where !members[index].isSelf {
+            // Includes you. Our own voice detector has handed the microphone
+            // to LiveKit by this point, so LiveKit's measurement of the
+            // published track is the only honest source for whether you are
+            // talking — and it is the same signal everybody else is hearing.
+            for index in members.indices {
                 members[index].isSpeaking = speaking.contains(members[index].deviceID)
             }
+            liveSpeaking = speaking.contains(DeviceIdentity.id)
             applyMusicBehaviour()
         }
     }

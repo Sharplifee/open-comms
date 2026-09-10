@@ -24,7 +24,8 @@ final class NearbyEngine: NSObject, ObservableObject {
 
     private let manager = CLLocationManager()
     private var lastWrite = Date.distantPast
-    private var here: CLLocation?
+    /// The last fix. Read by the public-lines list so it can sort by distance.
+    private(set) var here: CLLocation?
     private var poll: Task<Void, Never>?
     private var lowPower = false
 

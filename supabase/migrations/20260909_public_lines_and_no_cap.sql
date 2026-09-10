@@ -1,0 +1,19 @@
+-- Applied live to tbgcinfhgskcjoevfkea 2026-09-09 and proved end to end:
+-- a public line was listed to a stranger, the stranger asked, the host saw the
+-- request by name, the host said yes, and the poll returned the join code.
+--
+-- 1. THE CAP IS GONE. max_members defaulted to 8 and join_squad refused past
+--    it. There was never a reason for the number — LiveKit bills by
+--    participant-minute and does not care — and "your line is full" is an
+--    insulting thing to tell somebody who invited one person too many.
+--    Existing rows are lifted too, because a cap somebody is already stuck
+--    behind is the one that matters.
+--
+-- 2. PUBLIC LINES. Every line was unlisted: you could only join a code
+--    somebody handed you. Right for two people in a gym, wrong for a club
+--    session or a coaching group. A public line is listed to people nearby.
+--
+-- 3. KNOCKING. Joining a public line ASKS rather than enters. The host sees
+--    who is asking and says yes or no — the difference between a line anybody
+--    can find and a line anybody can walk into. A block in either direction
+--    hides the line entirely rather than letting somebody ask and be refused.

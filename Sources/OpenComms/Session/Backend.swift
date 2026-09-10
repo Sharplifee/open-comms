@@ -115,6 +115,53 @@ actor Backend {
         (try? await rpc("match_contacts", ["p_hashes": hashes])) ?? []
     }
 
+    // MARK: - Public lines
+
+    func setPublic(_ squadID: String, isPublic: Bool) async {
+        _ = try? await rpcVoid("set_line_public", ["p_squad_id": squadID,
+                                                   "p_device_id": DeviceIdentity.id,
+                                                   "p_public": isPublic])
+    }
+
+    func publicLines(lat: Double?, lon: Double?) async -> [PublicLineRow] {
+        (try? await rpc("public_lines", ["p_device_id": DeviceIdentity.id,
+                                         "p_lat": lat as Any, "p_lon": lon as Any])) ?? []
+    }
+
+    func askToJoin(_ squadID: String, displayName: String) async -> String {
+        guard let data = try? await post("ask_to_join",
+                ["p_squad_id": squadID, "p_device_id": DeviceIdentity.id,
+                 "p_display_name": displayName]),
+              let answer = try? JSONDecoder().decode(String.self, from: data)
+        else { return "error" }
+        return answer
+    }
+
+    func pendingRequests(_ squadID: String) async -> [RequestRow] {
+        (try? await rpc("pending_requests", ["p_squad_id": squadID,
+                                             "p_device_id": DeviceIdentity.id])) ?? []
+    }
+
+    /// Returns the join code on a yes, so the person who asked can open the
+    /// line without the host having to read a number out loud.
+    @discardableResult
+    func answerRequest(_ squadID: String, device: String, grant: Bool) async -> String {
+        guard let data = try? await post("answer_request",
+                ["p_squad_id": squadID, "p_host_device": DeviceIdentity.id,
+                 "p_device_id": device, "p_grant": grant]),
+              let answer = try? JSONDecoder().decode(String.self, from: data)
+        else { return "error" }
+        return answer
+    }
+
+    func requestAnswer(_ squadID: String) async -> String {
+        guard let data = try? await post("request_answer",
+                ["p_squad_id": squadID, "p_device_id": DeviceIdentity.id]),
+              let answer = try? JSONDecoder().decode(String.self, from: data)
+        else { return "waiting" }
+        return answer
+    }
+
     func updateLocation(lat: Double, lon: Double) async {
         _ = try? await rpcVoid("update_location", [
             "p_device_id": DeviceIdentity.id, "p_lat": lat, "p_lon": lon
@@ -286,6 +333,23 @@ struct JoinRow: Decodable {
     let r_squad_name: String?
     let r_join_code: String?
     let r_is_creator: Bool
+}
+
+struct PublicLineRow: Decodable, Identifiable {
+    var id: String { squad_id }
+    let squad_id: String
+    let squad_name: String
+    let host_name: String
+    let members: Int
+    let metres: Double?
+    let already_in: Bool
+    let asked: Bool
+}
+
+struct RequestRow: Decodable, Identifiable {
+    var id: String { device_id }
+    let device_id: String
+    let display_name: String
 }
 
 struct ContactRow: Decodable {

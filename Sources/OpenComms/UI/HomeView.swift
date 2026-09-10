@@ -20,6 +20,7 @@ struct HomeView: View {
     @State private var expanded: String?
     @State private var reporting: Member?
     @State private var copied = false
+    @State private var openLines: [PublicLineRow] = []
 
     var body: some View {
         ScrollView {
@@ -67,6 +68,16 @@ struct HomeView: View {
         // is open.
         .onDisappear { line.stopListeningOnly() }
         .onAppear { peers.start() }
+        .task {
+            // Refreshed while Home is on screen. Public lines come and go with
+            // whoever opened them, so a stale list is worse than none.
+            while !Task.isCancelled {
+                openLines = await Backend.shared.publicLines(lat: nearby.here?.coordinate.latitude,
+                                                             lon: nearby.here?.coordinate.longitude)
+                    .filter { !$0.already_in }
+                try? await Task.sleep(for: .seconds(8))
+            }
+        }
         .onChange(of: store.prefs.displayName) { _, _ in peers.refresh() }
         .alert("Talk to \(peers.invitation?.from ?? "them")?",
                isPresented: Binding(get: { peers.invitation != nil },
@@ -96,6 +107,30 @@ struct HomeView: View {
     /// Only worth saying when the microphone is not the obvious one. On
     /// CarPlay the car's mic is used and there is nothing to explain; on
     /// Bluetooth there is a real choice and its consequence.
+    private func distanceText(_ metres: Double) -> String {
+        metres < 300 ? "\(Int(metres * 3.28084)) ft" : String(format: "%.1f mi", metres / 1609.34)
+    }
+
+    private func openChoice(title: String, detail: String, selected: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Theme.signal : Theme.muted)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.text)
+                    Text(detail).font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.muted)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+            }
+            .padding(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
+            .background(Theme.surface)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var micNote: String {
         if AudioSession.shared.onSpeaker || AudioSession.shared.onCarPlay { return "" }
         return store.prefs.useHeadsetMic ? " · headset mic" : " · phone mic"
@@ -247,6 +282,37 @@ struct HomeView: View {
                 }
             }
 
+            if !openLines.isEmpty {
+                listHead("Live near you", "\(openLines.count)", dot: true)
+                ForEach(openLines) { entry in
+                    Button { Task { await line.knock(on: entry) } } label: {
+                        HStack(spacing: 13) {
+                            Avatar(text: String(entry.host_name.prefix(2)).uppercased())
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.squad_name)
+                                    .font(.system(size: 15.5, weight: .bold, design: .rounded))
+                                Text("\(entry.host_name) · \(entry.members) on the line"
+                                     + (entry.metres.map { " · \(distanceText($0))" } ?? ""))
+                                    .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.muted)
+                            }
+                            Spacer()
+                            Text(entry.asked ? "Asked" : "Ask")
+                                .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                                .foregroundStyle(entry.asked ? Theme.muted : Theme.onSignal)
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .background(entry.asked ? Theme.raised : Theme.signal, in: Capsule())
+                        }
+                        .padding(EdgeInsets(top: 13, leading: 14, bottom: 13, trailing: 14))
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Theme.line, lineWidth: 1))
+                        .padding(.horizontal, 20).padding(.bottom, 9)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(entry.asked)
+                }
+            }
+
             listHead("Nearby", nearby.denied ? "—" : "\(nearby.people.count) people", dot: true)
             if nearby.denied {
                 EmptyView()
@@ -267,11 +333,22 @@ struct HomeView: View {
                 }
             }
 
+            listHead("When you open a line", "")
+            VStack(spacing: 1) {
+                openChoice(title: "Private", detail: "Only people you hand the code to. Nobody can see it exists.",
+                           selected: !store.prefs.publicLine) { store.prefs.publicLine = false }
+                openChoice(title: "Public", detail: "Listed for people nearby. They ask to join and you say yes or no.",
+                           selected: store.prefs.publicLine) { store.prefs.publicLine = true }
+            }
+            .background(Theme.line)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
+            .padding(.horizontal, 20)
+
             HStack(spacing: 11) {
                 switchTile("GHOST MODE", "Hide from nearby and contacts", $store.prefs.ghostMode)
                 switchTile("PRIVATE SESSION", "Keep it off discovery", $store.prefs.privateLine)
             }
-            .padding(.horizontal, 20).padding(.top, 6)
+            .padding(.horizontal, 20).padding(.top, 12)
 
             Button("Start a Session") { creating = true }
                 .buttonStyle(PrimaryButton(hot: true))
@@ -297,6 +374,33 @@ struct HomeView: View {
                           subtitle: "Live · \(line.members.count) members · \(line.elapsed)",
                           people: nearby.people, radiusIndex: $store.prefs.radiusIndex, showRange: $showRange)
                     .padding(.horizontal, 20)
+            }
+
+            ForEach(line.knocking) { request in
+                HStack(spacing: 12) {
+                    Avatar(text: String(request.display_name.prefix(2)).uppercased())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(request.display_name)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                        Text("wants to join").font(.system(size: 12, design: .rounded))
+                            .foregroundStyle(Theme.muted)
+                    }
+                    Spacer()
+                    Button("No") { Task { await line.answer(request, grant: false) } }
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.muted)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                    Button("Let in") { Task { await line.answer(request, grant: true) } }
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.onSignal)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Theme.signal, in: Capsule())
+                }
+                .padding(EdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14))
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Theme.signal, lineWidth: 1))
+                .padding(.horizontal, 20).padding(.bottom, 10)
             }
 
             if line.connecting {
