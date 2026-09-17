@@ -19,8 +19,15 @@ final class SoundCheck: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var lines: [String] = []
 
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    /// AVAudioPlayer, not AVAudioEngine, and that is deliberate.
+    ///
+    /// The whole point of this check is to prove the path a voice takes
+    /// without disturbing it — and starting a second AVAudioEngine on a
+    /// session LiveKit is already using is precisely the fight that broke
+    /// playback in the first place. AVAudioPlayer renders through the session
+    /// without claiming the engine, so the check is safe to run mid-line,
+    /// which is exactly when somebody reaches for it.
+    private var player: AVAudioPlayer?
     private init() {}
 
     /// Run it. Plays a short tone and collects what each layer reports.
@@ -90,32 +97,52 @@ final class SoundCheck: ObservableObject {
     /// its own engine so it cannot disturb the line's audio, and stopped as
     /// soon as it has played.
     private func playTone() async -> Bool {
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)
-        guard let format,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 22_050) else { return false }
-        buffer.frameLength = 22_050
-        guard let samples = buffer.floatChannelData?[0] else { return false }
-        // 880 Hz, faded in and out so it is a note rather than a click.
-        for i in 0..<Int(buffer.frameLength) {
-            let t = Double(i) / 44_100
-            let fade = min(1, min(t * 12, (0.5 - t) * 12))
-            samples[i] = Float(sin(2 * .pi * 880 * t) * 0.22 * max(0, fade))
-        }
-
-        if player.engine == nil { engine.attach(player) }
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        guard let url = Self.toneFile else { return false }
         do {
-            try engine.start()
+            let player = try AVAudioPlayer(contentsOf: url)
+            self.player = player
+            player.volume = 0.9
+            guard player.play() else { return false }
+            try? await Task.sleep(for: .milliseconds(700))
+            player.stop()
+            self.player = nil
+            return true
         } catch {
+            say("⚠︎ Tone error: \(error.localizedDescription)")
             return false
         }
-        player.scheduleBuffer(buffer, completionHandler: nil)
-        player.play()
-        try? await Task.sleep(for: .milliseconds(700))
-        player.stop()
-        engine.stop()
-        return true
     }
+
+    /// A half-second 880 Hz note, faded at both ends so it is a note rather
+    /// than a click, written once as a WAV in the temporary directory.
+    private static let toneFile: URL? = {
+        let rate = 44_100.0, seconds = 0.5
+        let frames = Int(rate * seconds)
+        var samples = [Int16]()
+        samples.reserveCapacity(frames)
+        for i in 0..<frames {
+            let t = Double(i) / rate
+            let fade = min(1, min(t * 12, (seconds - t) * 12))
+            samples.append(Int16(sin(2 * .pi * 880 * t) * 0.22 * max(0, fade) * 32_767))
+        }
+
+        var data = Data()
+        func append32(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        func append16(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+
+        let payload = UInt32(samples.count * 2)
+        data.append(contentsOf: Array("RIFF".utf8)); append32(36 + payload)
+        data.append(contentsOf: Array("WAVE".utf8))
+        data.append(contentsOf: Array("fmt ".utf8)); append32(16)
+        append16(1); append16(1)                       // PCM, mono
+        append32(UInt32(rate)); append32(UInt32(rate) * 2)
+        append16(2); append16(16)                      // block align, bit depth
+        data.append(contentsOf: Array("data".utf8)); append32(payload)
+        samples.forEach { withUnsafeBytes(of: $0.littleEndian) { data.append(contentsOf: $0) } }
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("opencomms-tone.wav")
+        do { try data.write(to: url); return url } catch { return nil }
+    }()
 
     private func describe(_ options: AVAudioSession.CategoryOptions) -> String {
         var names: [String] = []
