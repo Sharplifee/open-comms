@@ -728,6 +728,28 @@ final class LineManager: NSObject, ObservableObject {
         }
     }
 
+    /// What is actually arriving from the other end, in plain terms.
+    ///
+    /// The one-way-audio failure was invisible from inside the app: the line
+    /// said "connected", the microphone was going out, and nothing came back.
+    /// Every fact needed to tell those apart was available and none of it was
+    /// on screen. This is that, so the next time it happens the answer takes
+    /// five seconds instead of a day.
+    var incomingReport: (tracks: Int, subscribed: Int, audible: Int, muted: Int) {
+        var tracks = 0, subscribed = 0, audible = 0, muted = 0
+        for participant in room.remoteParticipants.values {
+            for publication in participant.audioTracks {
+                tracks += 1
+                if publication.isSubscribed { subscribed += 1 }
+                if publication.isMuted { muted += 1 }
+                if let track = publication.track as? RemoteAudioTrack, track.volume > 0.001 {
+                    audible += 1
+                }
+            }
+        }
+        return (tracks, subscribed, audible, muted)
+    }
+
     func blockAndReport(_ member: Member, reason: String) async {
         await Backend.shared.report(member.deviceID, squadID: squad?.id, reason: reason, detail: nil)
         blockedDevices.insert(member.deviceID)

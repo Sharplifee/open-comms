@@ -31,6 +31,10 @@ struct DiagView: View {
                     row("Network", net.online ? "Online" : "Offline", net.online ? .good : .bad)
                     row("Line", connectionText, line.squad == nil ? .idle : .good)
                     row("On the line", "\(line.members.count)", line.members.isEmpty ? .idle : .good)
+                    // The four facts that separate "they can't hear me" from
+                    // "I can't hear them". All of these were available during
+                    // the one-way failure and none were on screen.
+                    row("Incoming audio", incoming, incomingHealth)
                     row("Nearby", nearby.denied ? "—" : "\(nearby.people.count) in range", .good)
                     row("Right here", peers.running ? "\(peers.peers.count) over Bluetooth/Wi-Fi" : "Not running",
                         peers.running ? .good : .idle)
@@ -80,6 +84,15 @@ struct DiagView: View {
                     .padding(.horizontal, 22).padding(.top, 12)
                 }
 
+                Button("Play a test tone") { AudioProbe.shared.play(); Haptics.tap(.light) }
+                    .buttonStyle(PrimaryButton(hot: true))
+                    .padding(.horizontal, 22).padding(.top, 16)
+
+                Text("Two short notes through whatever you're listening on. Hear them and playback is fine, so any silence is coming from the other end.")
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(Theme.dim)
+                    .padding(.horizontal, 24).padding(.top, 8)
+
                 HStack(spacing: 11) {
                     Button("Force reconnect") { Task { await reconnect() } }
                         .buttonStyle(PrimaryButton())
@@ -122,6 +135,25 @@ struct DiagView: View {
         .cardSurface(Theme.rowRadius)
     }
 
+    /// Reads as a sentence rather than four counters, because the person
+    /// looking at it is trying to answer one question.
+    private var incoming: String {
+        guard line.squad != nil else { return "—" }
+        let r = line.incomingReport
+        if r.tracks == 0 { return "nothing published" }
+        if r.subscribed == 0 { return "\(r.tracks) sent, none subscribed" }
+        if r.muted == r.tracks { return "all muted at source" }
+        if r.audible == 0 { return "subscribed, silenced here" }
+        return "\(r.audible) of \(r.tracks) audible"
+    }
+
+    private var incomingHealth: Health {
+        guard line.squad != nil else { return .idle }
+        let r = line.incomingReport
+        if r.tracks == 0 || r.subscribed == 0 { return .bad }
+        return r.audible > 0 ? .good : .bad
+    }
+
     private var connectionText: String {
         guard let squad = line.squad else { return "None" }
         return "\(squad.code) · \(line.elapsed)"
@@ -152,6 +184,7 @@ struct DiagView: View {
         line: \(connectionText)
         members: \(line.members.count)
         nearby: \(nearby.people.count)
+        incoming: \(incoming)
         session: \(AudioSession.shared.liveDescription)
         mic in: \(AudioSession.shared.inputName)
         incoming: \(line.incomingTracks.playing)/\(line.incomingTracks.subscribed)
