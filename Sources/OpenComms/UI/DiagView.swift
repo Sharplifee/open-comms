@@ -33,6 +33,15 @@ struct DiagView: View {
                     row("Nearby", nearby.denied ? "—" : "\(nearby.people.count) in range", .good)
                     row("Right here", peers.running ? "\(peers.peers.count) over Bluetooth/Wi-Fi" : "Not running",
                         peers.running ? .good : .idle)
+                    row("Session", AudioSession.shared.liveDescription, .good)
+                    row("Mic in use", AudioSession.shared.inputName, .good)
+                    row("Incoming audio",
+                        line.squad == nil ? "—"
+                            : "\(line.incomingTracks.playing) of \(line.incomingTracks.subscribed) playing",
+                        line.squad == nil ? .idle
+                            : line.incomingTracks.playing > 0 ? .good : .bad)
+                    row("Their volume", "\(Int(store.prefs.theirVolume * 100))%",
+                        store.prefs.theirVolume > 0.05 ? .good : .bad)
                     row("Background", "audio", .good)
                     row("Wake on push", "standard · tap to rejoin", .good)
                     row("Version", version, .good)
@@ -111,6 +120,9 @@ struct DiagView: View {
         line: \(connectionText)
         members: \(line.members.count)
         nearby: \(nearby.people.count)
+        session: \(AudioSession.shared.liveDescription)
+        mic in: \(AudioSession.shared.inputName)
+        incoming: \(line.incomingTracks.playing)/\(line.incomingTracks.subscribed)
         right here: \(peers.running ? String(peers.peers.count) : "not running")
         visibility: \(store.prefs.visibility.rawValue)
         """

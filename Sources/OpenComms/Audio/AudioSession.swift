@@ -157,6 +157,24 @@ final class AudioSession {
     /// may return to full volume and full quality. Without it another app can
     /// sit ducked, or stay in the degraded shared configuration, long after
     /// this app has stopped caring.
+    /// What the session actually is right now, as opposed to what the app
+    /// last asked for. When somebody says they can hear nothing, this is the
+    /// difference between guessing and knowing.
+    var liveDescription: String {
+        let s = AVAudioSession.sharedInstance()
+        var opts: [String] = []
+        if s.categoryOptions.contains(.mixWithOthers) { opts.append("mix") }
+        if s.categoryOptions.contains(.allowBluetooth) { opts.append("HFP") }
+        if s.categoryOptions.contains(.allowBluetoothA2DP) { opts.append("A2DP") }
+        if s.categoryOptions.contains(.defaultToSpeaker) { opts.append("spk") }
+        let mode = s.mode.rawValue.replacingOccurrences(of: "AVAudioSessionMode", with: "")
+        return "\(mode) · \(opts.joined(separator: "+"))"
+    }
+
+    var inputName: String {
+        AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "none"
+    }
+
     func deactivate() {
         guard configured else { return }
         configured = false

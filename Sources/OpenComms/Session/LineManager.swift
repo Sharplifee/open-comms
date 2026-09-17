@@ -127,6 +127,7 @@ final class LineManager: NSObject, ObservableObject {
             }
             return
         }
+        // No line, so nothing else wants the session and this path owns it.
         AudioSession.shared.useHeadsetMic = store.prefs.useHeadsetMic
         applyNoiseSetting()
         AudioSession.shared.configure()
@@ -144,6 +145,21 @@ final class LineManager: NSObject, ObservableObject {
     }
 
     var isListening: Bool { detector.isListening }
+
+    /// What audio is actually arriving, counted off the room rather than
+    /// inferred from the member list. "Two people on the line and zero
+    /// subscribed tracks" is the shape of one-way audio, and it should be
+    /// readable on the phone rather than reasoned about afterwards.
+    var incomingTracks: (subscribed: Int, playing: Int) {
+        var subscribed = 0, playing = 0
+        for participant in room.remoteParticipants.values {
+            for publication in participant.audioTracks {
+                if publication.isSubscribed { subscribed += 1 }
+                if let track = publication.track as? RemoteAudioTrack, track.isEnabled { playing += 1 }
+            }
+        }
+        return (subscribed, playing)
+    }
 
     private override init() {
         super.init()
@@ -271,6 +287,10 @@ final class LineManager: NSObject, ObservableObject {
 
         // On screen instantly. `connecting` is what the session view uses to
         // show a thin line at the top rather than a wall in the middle.
+        // Hand back anything the meter was holding before LiveKit takes over.
+        detector.stop()
+        AudioSession.shared.deactivate()
+
         squad = Squad(id: "", name: name, code: code, isHost: creating)
         members = [Member(deviceID: DeviceIdentity.id,
                           displayName: store.prefs.displayName.isEmpty ? "You" : store.prefs.displayName,
@@ -280,15 +300,16 @@ final class LineManager: NSObject, ObservableObject {
         connecting = true
         Haptics.tap()
 
-        // The microphone meter and the audio session do not need the server,
-        // so start them while the request is still in flight.
+        // The session is LiveKit's from here. It activates and deactivates
+        // around its own audio unit, using the configuration handed to it in
+        // init — so this path sets the inputs to that decision and then keeps
+        // its hands off. Configuring it here as well is two owners for one
+        // session, and the previous build proved what that costs: the
+        // microphone went out and nothing came back.
         AudioSession.shared.useHeadsetMic = store.prefs.useHeadsetMic
+        AudioManager.shared.sessionConfiguration = AudioSession.livekitConfiguration()
         applyNoiseSetting()
         applyMusicPolicy()
-        AudioSession.shared.configure()
-        detector.threshold = store.prefs.thresholdDB
-        detector.selfMonitorGain = Float(store.prefs.selfMonitor)
-        detector.start()
 
         do {
             let result = try await Backend.shared.openLine(
@@ -385,9 +406,9 @@ final class LineManager: NSObject, ObservableObject {
         let token = try await Backend.shared.livekitToken(squadID: squad.id,
                                                           displayName: store.prefs.displayName)
         AudioSession.shared.useHeadsetMic = store.prefs.useHeadsetMic
+        AudioManager.shared.sessionConfiguration = AudioSession.livekitConfiguration()
         applyNoiseSetting()
         applyMusicPolicy()
-        AudioSession.shared.configure()
         try await room.connect(url: Config.livekitURL, token: token)
         try await room.localParticipant.setMicrophone(enabled: true)
 
