@@ -85,6 +85,7 @@ final class LineManager: NSObject, ObservableObject {
     private var restoreMusic: Task<Void, Never>?
     private var focus: Task<Void, Never>?
     private var reconnect: Task<Void, Never>?
+    private var silenceWatch: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
     private var store: Store { Store.shared }
 
@@ -338,6 +339,7 @@ final class LineManager: NSObject, ObservableObject {
             Cues.opened(store.prefs.soundCues)
             applyCourtRole()
             startHeartbeat(opened.id)
+            watchForSilence(opened.id)
         } catch {
             await abandon("Couldn't reach the line. Nothing was lost — try again.")
         }
@@ -482,6 +484,7 @@ final class LineManager: NSObject, ObservableObject {
         // Without this, leaving during a reconnect pulled the person straight
         // back into the line they had just left.
         reconnect?.cancel(); reconnect = nil
+        silenceWatch?.cancel(); silenceWatch = nil
         focusUntil = nil
         mutedEveryone = false
         musicIsYielding = false
@@ -780,6 +783,58 @@ final class LineManager: NSObject, ObservableObject {
 
     /// Also renews the line's expiry, so a line in genuine use never lapses
     /// mid-workout, and claims the host if whoever opened it has gone.
+    /// Notice a line that is up but silent, and fix it without being asked.
+    ///
+    /// The failure Connor hit looked exactly like this from the inside:
+    /// somebody else on the line, their track subscribed, and nothing coming
+    /// out — audio going one way. Every layer reported success, which is why
+    /// it took three builds to find. The condition is cheap to detect, so the
+    /// app should detect it rather than wait for somebody to describe it.
+    ///
+    /// Two attempts, escalating. First re-apply the volumes, which fixes a
+    /// track that arrived at zero. If it is still silent, unsubscribe and
+    /// resubscribe the track — the WebRTC-level version of turning it off and
+    /// on again, and the only thing short of rejoining that rebuilds the
+    /// receiving path.
+    private func watchForSilence(_ squadID: String) {
+        silenceWatch?.cancel()
+        silenceWatch = Task { [weak self] in
+            var strikes = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(6))
+                guard let self, self.squad?.id == squadID else { return }
+
+                let tracks = self.incomingTracks
+                // Nobody else here, or nothing subscribed yet, is not silence
+                // — it is an empty room, and there is nothing to repair.
+                guard tracks.subscribed > 0 else { strikes = 0; continue }
+                guard tracks.playing == 0 else { strikes = 0; continue }
+
+                strikes += 1
+                if strikes == 1 {
+                    Log.audio.error("line is silent — reapplying volumes")
+                    self.applyChosenVolume()
+                } else if strikes >= 2 {
+                    Log.audio.error("line still silent — resubscribing")
+                    await self.resubscribeEverybody()
+                    strikes = 0
+                }
+            }
+        }
+    }
+
+    private func resubscribeEverybody() async {
+        for participant in room.remoteParticipants.values {
+            for publication in participant.audioTracks {
+                guard let remote = publication as? RemoteTrackPublication else { continue }
+                try? await remote.set(subscribed: false)
+                try? await Task.sleep(for: .milliseconds(250))
+                try? await remote.set(subscribed: true)
+            }
+        }
+        applyChosenVolume()
+    }
+
     private func startHeartbeat(_ squadID: String) {
         heartbeat?.cancel()
         heartbeat = Task { [weak self] in
