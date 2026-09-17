@@ -204,6 +204,13 @@ final class LineManager: NSObject, ObservableObject {
     @Published private(set) var knocking: [RequestRow] = []
     private var knockWatch: Task<Void, Never>?
 
+    /// The outcome of the last attempt, so the callers that pick a code
+    /// themselves can tell a collision — which is their own dice roll and
+    /// theirs to re-roll — from a refusal that should be shown to the person.
+    /// A code somebody TYPED that comes back taken is real information and is
+    /// never retried behind their back.
+    private(set) var lastOutcome: JoinOutcome?
+
     func open(code: String, name: String) async {
         await connect(code: code, creating: true, name: name)
         // A public line has to be marked public and then watched, because from
@@ -323,6 +330,7 @@ final class LineManager: NSObject, ObservableObject {
                 code: code, creating: creating, name: name,
                 displayName: store.prefs.displayName)
 
+            lastOutcome = result.outcome
             guard result.outcome == .ok, let opened = result.squad, let token = result.token else {
                 await abandon(refusal(result.outcome, retryAfter: result.retryAfter, code: code))
                 return

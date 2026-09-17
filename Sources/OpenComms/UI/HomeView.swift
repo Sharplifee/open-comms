@@ -143,9 +143,19 @@ struct HomeView: View {
     /// somebody who has just installed the app and does not want to learn how
     /// it works — which is most people, most of the time.
     private func openWith(_ peer: NearbyPeer) {
-        let code = String(format: "%03d", Int.random(in: 100...999))
-        peers.invite(peer, toCode: code)
-        Task { await line.open(code: code, name: peer.displayName) }
+        // The code is picked here so it can be handed over the same radio that
+        // found them, and retried here too if it collides with a live line.
+        Task {
+            for _ in 0..<6 {
+                let code = String(format: "%03d", Int.random(in: 100...999))
+                peers.invite(peer, toCode: code)
+                await line.open(code: code, name: peer.displayName)
+                // Stop on success, and on any refusal that is not a
+                // collision — a rate limit or a block is not fixed by
+                // rolling again.
+                if line.squad != nil || line.lastOutcome != .taken { return }
+            }
+        }
     }
 
     private var failureBinding: Binding<Bool> {

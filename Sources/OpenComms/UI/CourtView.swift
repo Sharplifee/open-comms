@@ -296,9 +296,14 @@ struct CourtView: View {
         VStack(spacing: 12) {
             if let peer = peers.peers.first {
                 Button {
-                    let code = String(format: "%03d", Int.random(in: 100...999))
-                    peers.invite(peer, toCode: code)
-                    Task { await line.open(code: code, name: peer.displayName) }
+                    Task {
+                        for _ in 0..<6 {
+                            let code = String(format: "%03d", Int.random(in: 100...999))
+                            peers.invite(peer, toCode: code)
+                            await line.open(code: code, name: peer.displayName)
+                            if line.squad != nil || line.lastOutcome != .taken { return }
+                        }
+                    }
                 } label: {
                     HStack {
                         Avatar(text: peer.initials)
