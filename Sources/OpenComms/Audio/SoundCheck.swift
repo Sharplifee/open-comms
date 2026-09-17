@@ -86,12 +86,51 @@ final class SoundCheck: ObservableObject {
                 }
             }
             say("Your mic: \(line.micLive ? "publishing" : "muted")")
+
+            // 6. Is sound actually MOVING?
+            //
+            // Everything above can look perfect while nobody hears anything:
+            // a track can be subscribed and carry silence, and a mic can be
+            // publishing a dead input. So watch the levels for a couple of
+            // seconds and say what they did. This is the difference between
+            // "their audio never arrives" and "their audio arrives and this
+            // phone will not play it" — two completely different faults that
+            // feel identical when you are standing on a court.
+            say("Listening for two seconds — talk now")
+            var peaks: [String: Float] = [:]
+            var localPeak: Float = 0
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(100))
+                localPeak = max(localPeak, line.room.localParticipant.audioLevel)
+                for participant in line.room.remoteParticipants.values {
+                    let name = participant.name ?? participant.identity?.stringValue ?? "someone"
+                    peaks[name] = max(peaks[name] ?? 0, participant.audioLevel)
+                }
+            }
+
+            say(localPeak > 0.01
+                ? "Your voice measured \(percent(localPeak)) — going out"
+                : "⚠︎ Your voice measured nothing — the mic is not reaching the line")
+
+            if peaks.isEmpty {
+                say("No remote audio to measure")
+            }
+            for (name, peak) in peaks.sorted(by: { $0.key < $1.key }) {
+                say(peak > 0.01
+                    ? "\(name) measured \(percent(peak)) — arriving at this phone"
+                    : "⚠︎ \(name) measured nothing — no sound is arriving from them")
+            }
+            if let loudest = peaks.values.max(), loudest > 0.01 {
+                say("Audio is arriving. If you cannot hear it, the fault is playback, not the line.")
+            }
         } else {
             say("No line open — this checks your own audio only")
         }
     }
 
     private func say(_ text: String) { lines.append(text) }
+
+    private func percent(_ level: Float) -> String { "\(Int(level * 100))%" }
 
     /// A short, quiet, unmistakable tone through the shared session. Built on
     /// its own engine so it cannot disturb the line's audio, and stopped as
