@@ -11,6 +11,7 @@ struct DiagView: View {
     @ObservedObject private var net = Reachability.shared
     @ObservedObject private var nearby = NearbyEngine.shared
     @ObservedObject private var peers = PeerDiscovery.shared
+    @ObservedObject private var check = SoundCheck.shared
     @State private var copied = false
     @State private var now = Date()
 
@@ -47,6 +48,37 @@ struct DiagView: View {
                     row("Version", version, .good)
                 }
                 .padding(.horizontal, 22)
+
+                // The first thing to reach for when somebody says they heard
+                // nothing, because "I heard nothing" covers five different
+                // faults and this tells them apart in ten seconds.
+                Button(check.running ? "Checking…" : "Sound check") {
+                    Task { await check.run() }
+                }
+                .buttonStyle(PrimaryButton(hot: true))
+                .disabled(check.running)
+                .padding(.horizontal, 22).padding(.top, 16)
+
+                if !check.lines.isEmpty {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(Array(check.lines.enumerated()), id: \.offset) { _, entry in
+                            Text(entry)
+                                .font(.system(size: 12.5, design: .monospaced))
+                                .foregroundStyle(entry.hasPrefix("⚠︎") ? Theme.danger : Theme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Button("Copy this") {
+                            UIPasteboard.general.string = check.lines.joined(separator: "\n")
+                            Haptics.tap(.light)
+                        }
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.signal)
+                        .padding(.top, 4)
+                    }
+                    .padding(16)
+                    .cardSurface()
+                    .padding(.horizontal, 22).padding(.top, 12)
+                }
 
                 HStack(spacing: 11) {
                     Button("Force reconnect") { Task { await reconnect() } }

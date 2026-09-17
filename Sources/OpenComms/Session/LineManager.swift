@@ -57,7 +57,9 @@ final class LineManager: NSObject, ObservableObject {
     /// session, never as something covering the screen.
     @Published private(set) var connecting = false
 
-    private let room = Room()
+    /// Exposed read-only so the sound check can report what LiveKit actually
+    /// has — subscribed tracks, mute states — rather than what the app thinks.
+    let room = Room()
     /// Exposed so the meter can observe it directly. Reading `level` through
     /// this manager was a computed pass-through, and a computed property does
     /// not publish — the detector updated twenty times a second and the view
