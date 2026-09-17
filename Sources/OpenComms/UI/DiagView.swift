@@ -29,7 +29,7 @@ struct DiagView: View {
                     row("Location", nearby.denied ? "Denied" : "Granted", nearby.denied ? .bad : .good)
                     row("Network", net.online ? "Online" : "Offline", net.online ? .good : .bad)
                     row("Line", connectionText, line.squad == nil ? .idle : .good)
-                    row("On the line", "\(line.members.count) of 8", line.members.isEmpty ? .idle : .good)
+                    row("On the line", "\(line.members.count)", line.members.isEmpty ? .idle : .good)
                     row("Nearby", nearby.denied ? "—" : "\(nearby.people.count) in range", .good)
                     row("Right here", peers.running ? "\(peers.peers.count) over Bluetooth/Wi-Fi" : "Not running",
                         peers.running ? .good : .idle)

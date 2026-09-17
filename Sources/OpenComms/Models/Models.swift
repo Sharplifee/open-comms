@@ -188,11 +188,6 @@ struct Preferences: Codable {
         get { visibility == .hidden }
         set { visibility = newValue ? .hidden : .visible }
     }
-    var privateLine: Bool {
-        get { visibility != .visible }
-        set { if visibility != .hidden { visibility = newValue ? .codeOnly : .visible } }
-    }
-
     static let ranges: [(label: String, metres: Double)] = [
         ("100 FT", 30.5), ("250 FT", 76.2), ("500 FT", 152.4), ("0.25 MI", 402.3),
         ("1 MI", 1609.3), ("5 MI", 8046.7), ("25 MI", 40233.6), ("100 MI", 160934.4),

@@ -93,6 +93,7 @@ struct HomeView: View {
         .onChange(of: store.prefs.radiusIndex) { _, _ in nearby.rangeChanged() }
         .onChange(of: store.prefs.sensitivity) { _, _ in line.applySensitivity() }
         .onChange(of: store.prefs.theirVolume) { _, _ in line.applyChosenVolume() }
+        .onChange(of: store.prefs.lowPower) { _, on in nearby.setLowPower(on) }
         .onChange(of: store.prefs.visibility) { _, option in
             Task { await Backend.shared.setHidden(option == .hidden) }
             if option == .hidden { nearby.stop() } else { nearby.start() }
@@ -344,9 +345,13 @@ struct HomeView: View {
             .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
             .padding(.horizontal, 20)
 
+            // Ghost mode is about YOU being findable; the choice above is
+            // about the LINE being findable. They used to be two switches
+            // that could contradict each other — "private session" said the
+            // same thing as "private" and wrote to a different value.
             HStack(spacing: 11) {
-                switchTile("GHOST MODE", "Hide from nearby and contacts", $store.prefs.ghostMode)
-                switchTile("PRIVATE SESSION", "Keep it off discovery", $store.prefs.privateLine)
+                switchTile("GHOST MODE", "Hide yourself from nearby entirely", $store.prefs.ghostMode)
+                switchTile("LOW POWER", "Slower radar, longer battery", $store.prefs.lowPower)
             }
             .padding(.horizontal, 20).padding(.top, 12)
 
@@ -433,7 +438,10 @@ struct HomeView: View {
                     Spacer()
                 }
                 .padding(.top, 6)
-                Text("\(line.members.count) of 8 connected\(store.prefs.visibility != .visible ? " · private" : "")")
+                // "of 8" outlived the cap it described by a day. There is no
+                // limit now, so the count is just the count.
+                Text("\(line.members.count) on the line"
+                     + (store.prefs.publicLine ? " · public" : " · code only"))
                     .font(.system(size: 13, design: .rounded)).foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity).padding(.top, 6).padding(.bottom, 16)
             }
