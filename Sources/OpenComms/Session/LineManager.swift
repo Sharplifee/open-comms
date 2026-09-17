@@ -155,7 +155,11 @@ final class LineManager: NSObject, ObservableObject {
         for participant in room.remoteParticipants.values {
             for publication in participant.audioTracks {
                 if publication.isSubscribed { subscribed += 1 }
-                if let track = publication.track as? RemoteAudioTrack, track.isEnabled { playing += 1 }
+                // `isMuted` is the property Track actually exposes — a
+                // subscribed track that is muted is subscribed and silent,
+                // which is a different failure from not being subscribed at
+                // all, and telling them apart is the point of this row.
+                if let track = publication.track as? RemoteAudioTrack, !track.isMuted { playing += 1 }
             }
         }
         return (subscribed, playing)
