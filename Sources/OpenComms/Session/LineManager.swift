@@ -359,7 +359,10 @@ final class LineManager: NSObject, ObservableObject {
         case .taken: return "That code is somebody else's line right now. Pick another."
         case .notFound: return "No line on \(code) right now."
         case .expired: return "That line has already ended."
-        case .full: return "That line is full."
+        // There is no member cap any more, so this can only arrive from a
+        // server older than the app. Saying "full" would be a lie about a
+        // limit that no longer exists.
+        case .full: return "That line isn't accepting anybody right now."
         case .rateLimited: return "Too many tries. Give it \(max(retryAfter, 1)) seconds."
         // Deliberately vague about who and in which direction. Naming the
         // person tells a blocked stranger exactly who blocked them, and tells

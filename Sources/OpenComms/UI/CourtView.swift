@@ -30,6 +30,7 @@ struct CourtView: View {
                     if line.squad == nil {
                         openStrip
                     } else {
+                        knocks
                         roleSwitch
                         if store.prefs.courtRole == .coach { coachDeck } else { playerDeck }
                         micStrip
@@ -229,6 +230,40 @@ struct CourtView: View {
         .accessibilityLabel(text)
     }
 
+    /// Somebody asking to get onto a public session.
+    ///
+    /// A coach running an open group needs this exactly as much as anybody on
+    /// the Home screen does — more, since a public session is how a clinic or
+    /// a squad practice gets people on without reading a code across a court.
+    private var knocks: some View {
+        ForEach(line.knocking) { request in
+            HStack(spacing: 12) {
+                Avatar(text: String(request.display_name.prefix(2)).uppercased())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(request.display_name).font(.system(size: 15, weight: .bold, design: .rounded))
+                    Text("wants to join").font(.system(size: 12, design: .rounded))
+                        .foregroundStyle(Theme.muted)
+                }
+                Spacer()
+                Button("No") { Task { await line.answer(request, grant: false) } }
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.muted)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                Button("Let in") { Task { await line.answer(request, grant: true) } }
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.onSignal)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(Theme.signal, in: Capsule())
+            }
+            .padding(EdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14))
+            .background(Theme.surface.opacity(0.94),
+                        in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
+                .stroke(Theme.signal, lineWidth: 1))
+            .padding(.horizontal, 20).padding(.top, 12)
+        }
+    }
+
     // MARK: - Mic and opening
 
     private var micStrip: some View {
@@ -282,6 +317,32 @@ struct CourtView: View {
                 }
                 .buttonStyle(.plain)
             }
+            HStack(spacing: 0) {
+                ForEach([false, true], id: \.self) { isPublic in
+                    Button {
+                        store.prefs.publicLine = isPublic
+                        Haptics.select()
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(isPublic ? "Open group" : "Just us")
+                                .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                            Text(isPublic ? "Anyone nearby can ask" : "Code only")
+                                .font(.system(size: 10.5, design: .rounded))
+                                .foregroundStyle(store.prefs.publicLine == isPublic
+                                                 ? Theme.onSignal.opacity(0.8) : Theme.muted)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .foregroundStyle(store.prefs.publicLine == isPublic ? Theme.onSignal : Theme.text)
+                        .background(store.prefs.publicLine == isPublic ? Theme.signal : .clear,
+                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(3)
+            .background(Theme.surface.opacity(0.92),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
             Button("Open a session") { creating = true }.buttonStyle(PrimaryButton(hot: true))
             Button("Join with a code") { showKeypad = true }.buttonStyle(QuietButton())
             Text("Open it once at the start. Nobody touches a phone again until you're done.")
