@@ -20,6 +20,7 @@ struct CourtView: View {
     @State private var showKeypad = false
     @State private var leaving = false
     @State private var flash: String?
+    @State private var setup = false
 
     var body: some View {
         ZStack {
@@ -57,6 +58,7 @@ struct CourtView: View {
         .background(Theme.base.ignoresSafeArea())
         .sheet(isPresented: $creating) { CodeKeypad(mode: .create) }
         .sheet(isPresented: $showKeypad) { CodeKeypad(mode: .join) }
+        .sheet(isPresented: $setup) { CourtSetup().environmentObject(store).environmentObject(line) }
         .confirmationDialog("Leave this session?", isPresented: $leaving, titleVisibility: .visible) {
             Button("End for both", role: .destructive) { Task { await line.endForEveryone() } }
             Button("Just leave") { Task { await line.leave() } }
@@ -84,6 +86,17 @@ struct CourtView: View {
                     .foregroundStyle(Theme.text)
             }
             Spacer()
+            Button { setup = true } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 44, height: 44)
+                    .background(Theme.raised.opacity(0.95), in: Circle())
+                    .overlay(Circle().stroke(Theme.line, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Session setup")
+
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) { store.prefs.courtMode = false }
                 line.applyCourtRole()
@@ -154,7 +167,7 @@ struct CourtView: View {
                 .foregroundStyle(Theme.muted)
                 .padding(.horizontal, 22)
         }
-        .padding(.top, 20)
+        .padding(.top, 22)
     }
 
     private func deck(_ title: String, _ cues: [CoachCue], action: @escaping (CoachCue) -> Void) -> some View {
@@ -311,7 +324,7 @@ struct CourtView: View {
         .padding(16)
         .background(Theme.surface.opacity(0.92),
                     in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-        .padding(.horizontal, 20).padding(.top, 20)
+        .padding(.horizontal, 20).padding(.top, 22)
     }
 
     private var openStrip: some View {
@@ -388,10 +401,13 @@ struct CourtView: View {
 /// photograph is atmosphere, and every word on top of it has to stay readable
 /// in direct sun.
 struct CourtBackdrop: View {
-    private static let courts = ["CourtGrass", "CourtClay", "CourtDusk", "CourtNight"]
+    /// Sunset first, because it is the one Connor picked and the one the
+    /// palette was built against — the sky carries the signal yellow and the
+    /// court carries the green.
+    private static let courts = ["CourtSunset", "CourtGrass", "CourtClay", "CourtDusk", "CourtNight"]
 
-    /// Rotates by day, then by which hour you opened it — so it changes, but
-    /// never mid-session while somebody is looking at it.
+    /// Rotates by day, then by which half of the day you opened it — so it
+    /// changes, but never mid-session while somebody is looking at it.
     @State private var name: String = {
         let day = Calendar.current.ordinality(of: .day, in: .era, for: Date()) ?? 0
         let hour = Calendar.current.component(.hour, from: Date())
