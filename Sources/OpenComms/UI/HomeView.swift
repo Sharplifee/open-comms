@@ -189,9 +189,16 @@ struct HomeView: View {
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.signal)
-                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
                         .overlay(Capsule().stroke(Theme.signal, lineWidth: 1))
                 }
+                .buttonStyle(.plain)
+                // Never squeezed out by a long route name. The way INTO court
+                // mode and the way out both have to survive an AirPods Pro
+                // Max sitting next to them.
+                .layoutPriority(1)
+                .fixedSize()
 
                 Button(store.prefs.skin.badge) {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -210,7 +217,8 @@ struct HomeView: View {
                     // Output, then which mic. "AirPods Pro · phone mic" says
                     // exactly what is happening instead of leaving somebody to
                     // wonder why their AirPods mic seems off.
-                    Text(AudioSession.shared.routeName + micNote).lineLimit(1)
+                    Text(AudioSession.shared.routeName + micNote)
+                        .lineLimit(1).truncationMode(.tail)
                 }
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .padding(.horizontal, 13).padding(.vertical, 7)

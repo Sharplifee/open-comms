@@ -26,7 +26,6 @@ struct CourtView: View {
             CourtBackdrop()
             ScrollView {
                 VStack(spacing: 0) {
-                    header
                     if line.squad == nil {
                         openStrip
                     } else {
@@ -41,6 +40,18 @@ struct CourtView: View {
                 }
                 .padding(.bottom, 28)
             }
+            // The header is pinned OUTSIDE the scroll view.
+            //
+            // It used to be the first row of scrolling content, inside a
+            // ZStack whose backdrop ignores the safe area — which made the
+            // whole stack full-bleed and dragged the header up under the
+            // Dynamic Island. The title collided with the clock and "Exit
+            // court" sat half beneath the status bar where it could not be
+            // tapped, so court mode was a room with no door.
+            //
+            // safeAreaInset keeps it below the island on every device, above
+            // the content, and always reachable.
+            .safeAreaInset(edge: .top, spacing: 0) { header }
             if let flash { cueFlash(flash) }
         }
         .background(Theme.base.ignoresSafeArea())
@@ -78,14 +89,25 @@ struct CourtView: View {
                 line.applyCourtRole()
                 Haptics.tap(.light)
             } label: {
-                Text("Exit court")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                Label("Exit court", systemImage: "chevron.backward")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 13).padding(.vertical, 7)
-                    .background(Theme.raised.opacity(0.9), in: Capsule())
+                    .padding(.horizontal, 16)
+                    // 44 points tall, which is the smallest thing a thumb
+                    // finds reliably — the old one was 28 and half-covered.
+                    .frame(height: 44)
+                    .background(Theme.raised.opacity(0.95), in: Capsule())
+                    .overlay(Capsule().stroke(Theme.line, lineWidth: 1))
             }
+            .buttonStyle(.plain)
         }
-        .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 16)
+        .padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 14)
+        .background(
+            // Content scrolls underneath, so the header needs something to sit
+            // on or the words stack on each other.
+            LinearGradient(colors: [Theme.base, Theme.base.opacity(0.92), Theme.base.opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+        )
     }
 
     private var otherName: String {
