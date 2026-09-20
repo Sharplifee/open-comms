@@ -23,8 +23,22 @@ struct CourtView: View {
     @State private var setup = false
 
     var body: some View {
-        ZStack {
-            CourtBackdrop()
+        // The backdrop is a BACKGROUND, not a sibling in a stack.
+        //
+        // That is the whole bug, twice over. A child of a ZStack that ignores
+        // the safe area makes the ZStack itself full-bleed, so every other
+        // child — including the scroll view and anything inset into it — gets
+        // laid out from the physical top of the screen. safeAreaInset then
+        // dutifully pinned the header to the top of a frame that already
+        // started underneath the Dynamic Island, which is why moving it there
+        // changed nothing.
+        //
+        // A `.background` never affects the layout of what it sits behind, so
+        // the photograph can bleed to every edge while the header and the
+        // content still respect the safe area. This is the fix; the previous
+        // one was an adjustment inside the broken frame.
+        VStack(spacing: 0) {
+            header
             ScrollView {
                 VStack(spacing: 0) {
                     if line.squad == nil {
@@ -41,21 +55,11 @@ struct CourtView: View {
                 }
                 .padding(.bottom, 28)
             }
-            // The header is pinned OUTSIDE the scroll view.
-            //
-            // It used to be the first row of scrolling content, inside a
-            // ZStack whose backdrop ignores the safe area — which made the
-            // whole stack full-bleed and dragged the header up under the
-            // Dynamic Island. The title collided with the clock and "Exit
-            // court" sat half beneath the status bar where it could not be
-            // tapped, so court mode was a room with no door.
-            //
-            // safeAreaInset keeps it below the island on every device, above
-            // the content, and always reachable.
-            .safeAreaInset(edge: .top, spacing: 0) { header }
-            if let flash { cueFlash(flash) }
         }
-        .background(Theme.base.ignoresSafeArea())
+        .overlay { if let flash { cueFlash(flash) } }
+        .background {
+            CourtBackdrop().ignoresSafeArea()
+        }
         .sheet(isPresented: $creating) { CodeKeypad(mode: .create) }
         .sheet(isPresented: $showKeypad) { CodeKeypad(mode: .join) }
         .sheet(isPresented: $setup) { CourtSetup().environmentObject(store).environmentObject(line) }
@@ -77,15 +81,16 @@ struct CourtView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .top) {
+        HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("COURT").font(.system(size: 12, weight: .bold, design: .rounded)).kerning(2)
                     .foregroundStyle(Theme.signal)
                 Text(line.squad == nil ? "No session open" : "With \(otherName)")
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.text)
+                    .lineLimit(1).minimumScaleFactor(0.8)
             }
-            Spacer()
+            Spacer(minLength: 8)
             Button { setup = true } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 15, weight: .semibold))
@@ -114,13 +119,7 @@ struct CourtView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 14)
-        .background(
-            // Content scrolls underneath, so the header needs something to sit
-            // on or the words stack on each other.
-            LinearGradient(colors: [Theme.base, Theme.base.opacity(0.92), Theme.base.opacity(0)],
-                           startPoint: .top, endPoint: .bottom)
-        )
+        .padding(.horizontal, 20).padding(.top, 6).padding(.bottom, 14)
     }
 
     private var otherName: String {
@@ -418,10 +417,18 @@ struct CourtBackdrop: View {
     var body: some View {
         ZStack {
             Theme.base
-            Image(name)
-                .resizable()
-                .scaledToFill()
-                .opacity(shown ? 1 : 0)
+            GeometryReader { geo in
+                Image(name)
+                    .resizable()
+                    .scaledToFill()
+                    // Pinned to the frame it is handed and clipped. An
+                    // unclipped scaledToFill reports its own oversized ideal
+                    // size, which is another way a decorative image ends up
+                    // moving the things in front of it.
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+            }
+            .opacity(shown ? 1 : 0)
                 .overlay(
                     // Two layers: a flat dim for legibility, and a gradient
                     // that goes heavier at the bottom where the controls are
