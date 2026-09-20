@@ -248,60 +248,83 @@ struct MicCard: View {
                 let width = geo.size.width
                 let fill = hasSignal ? (detector.decibels - Self.floor) / Self.span : 0
                 let marker = sensitivity
+                // ONE bar, and the marker on it is the control.
+                //
+                // There used to be a slider underneath doing the same job from
+                // a second place. Two controls for one value is how you get a
+                // person watching the wrong one, and the whole point of this
+                // card is that the level and the line you have to cross are
+                // read on a single axis. So the slider is gone and the marker
+                // is the thing you drag.
                 ZStack(alignment: .leading) {
-                    // scale
-                    RoundedRectangle(cornerRadius: 6).fill(Theme.raised).frame(height: 22)
-                    // the part of the scale above the threshold — what "open" means
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 8).fill(Theme.raised).frame(height: 34)
+                    // Everything past the marker is the open region.
+                    RoundedRectangle(cornerRadius: 8)
                         .fill(Theme.signal.opacity(0.10))
-                        .frame(width: max(0, width * (1 - marker)), height: 22)
+                        .frame(width: max(0, width * (1 - marker)), height: 34)
                         .offset(x: width * marker)
-                    // live level
-                    // No implicit animation on the fill. The reading already
+                    // Live level. No implicit animation: the reading already
                     // arrives twenty-odd times a second, and animating each
-                    // step on top of that doubles the layout work for a
-                    // smoothness the eye cannot see at that rate.
-                    RoundedRectangle(cornerRadius: 6)
+                    // step doubles the layout work for a smoothness the eye
+                    // cannot see at that rate.
+                    RoundedRectangle(cornerRadius: 8)
                         .fill(crossing ? Theme.signal : Theme.muted)
-                        .frame(width: max(0, width * fill), height: 22)
-                    // segment ticks every 5 dB so the scale is readable
+                        .frame(width: max(0, width * fill), height: 34)
+                    // Ticks every five decibels, so the bar reads as a scale
+                    // rather than a progress indicator.
                     HStack(spacing: 0) {
                         ForEach(0..<9, id: \.self) { i in
-                            Rectangle().fill(Theme.base.opacity(0.55)).frame(width: 1, height: 22)
+                            Rectangle().fill(Theme.base.opacity(0.5)).frame(width: 1, height: 34)
                             if i < 8 { Spacer() }
                         }
                     }
-                    // the threshold marker you drag
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Theme.signal)
-                        .frame(width: 5, height: 36)
-                        .shadow(color: Theme.signal.opacity(0.5), radius: 4)
-                        .offset(x: width * marker - 2.5, y: 0)
+                    // The marker. A handle above and below the bar, because a
+                    // line flush with the bar reads as part of the fill and
+                    // gives a thumb nothing to aim at.
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Theme.signal)
+                            .frame(width: 5, height: 52)
+                        Circle()
+                            .fill(Theme.signal)
+                            .frame(width: 15, height: 15)
+                            .offset(y: -26)
+                    }
+                    .shadow(color: Theme.signal.opacity(0.45), radius: 5)
+                    .offset(x: width * marker - 2.5)
                 }
-                .frame(height: 36)
+                .frame(height: 52)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                     sensitivity = min(1, max(0, value.location.x / width))
                 })
             }
-            .frame(height: 36)
-            .padding(.top, 16)
+            .frame(height: 52)
+            .padding(.top, 18)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Level \(Int(detector.decibels.rounded())) decibels. Line opens at \(Int(thresholdDB.rounded())).")
+            .accessibilityLabel("Microphone level")
+            .accessibilityValue("\(Int(detector.decibels.rounded())) decibels. Opens at \(Int(thresholdDB.rounded())).")
+            // VoiceOver needs the marker to be adjustable now that the slider
+            // it used to borrow is gone.
+            .accessibilityAdjustableAction { direction in
+                let step = 1.0 / Self.span          // one decibel
+                switch direction {
+                case .increment: sensitivity = min(1, sensitivity + step)
+                case .decrement: sensitivity = max(0, sensitivity - step)
+                @unknown default: break
+                }
+            }
 
             HStack {
-                Text("−55").font(.system(size: 9, design: .monospaced))
+                Text("−55 dB").font(.system(size: 9.5, design: .monospaced))
                 Spacer()
-                Text("Whisper").font(.system(size: 11, design: .rounded))
+                Text("Drag the line to set where you open")
+                    .font(.system(size: 10.5, design: .rounded))
                 Spacer()
-                Text("Shout").font(.system(size: 11, design: .rounded))
-                Spacer()
-                Text("−12").font(.system(size: 9, design: .monospaced))
+                Text("−12 dB").font(.system(size: 9.5, design: .monospaced))
             }
             .foregroundStyle(Theme.muted)
-            .padding(.top, 6)
-
-            Slider(value: $sensitivity, in: 0...1).tint(Theme.line).padding(.top, 8)
+            .padding(.top, 8)
 
             HStack {
                 HStack(spacing: 7) {
