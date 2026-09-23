@@ -125,17 +125,23 @@ final class AudioSession {
             try session.setCategory(.playAndRecord,
                                     mode: modeForCurrentRoute(),
                                     options: options)
-            try session.setPreferredSampleRate(48_000)
-            // 5 ms was chosen for latency, but a buffer that small forces the
-            // hardware into a high-rate mode that everything sharing the
-            // session inherits, and on headphones that is audible on music as
-            // a thinner, harder sound. 10 ms is still well under anything a
-            // person perceives in conversation and leaves other audio alone.
-            try session.setPreferredIOBufferDuration(0.01)
-            // NOT .notifyOthersOnDeactivation — that flag belongs on
-            // deactivation. Passing it on activation does nothing useful, and
-            // activation itself is what interrupts other audio if the category
-            // is wrong, which is why the category is always set first.
+            // NOTHING about the hardware is requested here, and that is the
+            // point.
+            //
+            // setPreferredSampleRate and setPreferredIOBufferDuration are not
+            // requests about this app — they reconfigure the audio DEVICE,
+            // which every app sharing it is then dragged through. Apple Music
+            // plays 44.1 kHz; asking for 48 kHz forces the hardware to switch
+            // rate, and a rate switch stops whatever is currently playing.
+            // That is the "kicks my music into the background" behaviour, and
+            // it happened on every single activation.
+            //
+            // Without them the session inherits whatever the device is
+            // already doing. The voice line does not care — WebRTC resamples
+            // internally regardless — and the person's music never notices
+            // this app arrived.
+            //
+            // .notifyOthersOnDeactivation belongs on deactivation, not here.
             try session.setActive(true)
             chooseInput()
             configured = true

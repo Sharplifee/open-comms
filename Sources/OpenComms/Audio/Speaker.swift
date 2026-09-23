@@ -17,7 +17,16 @@ final class Speaker {
     static let shared = Speaker()
 
     private let synth = AVSpeechSynthesizer()
-    private init() {}
+
+    private init() {
+        // Left to itself, AVSpeechSynthesizer manages the audio session around
+        // every utterance — it activates one to speak and deactivates it
+        // afterwards, which stops whatever else is playing and then hands
+        // the session back. Told to use the application's session instead, it
+        // simply joins the mixed session the line already configured and
+        // nothing else on the phone notices.
+        synth.usesApplicationAudioSession = true
+    }
 
     func say(_ text: String) {
         // A cue that arrives late is worse than no cue, so a new one cancels

@@ -37,6 +37,13 @@ final class AudioProbe {
 
         do {
             if !engine.isRunning {
+                // Starting an AVAudioEngine ACTIVATES the shared session with
+                // whatever category is currently set — and if this app has not
+                // set one, that default is solo playback, which stops the
+                // person's music. A diagnostic that interrupts the thing you
+                // are diagnosing is worse than no diagnostic, so the session is
+                // configured with .mixWithOthers first, every time.
+                AudioSession.shared.configure()
                 engine.prepare()
                 try engine.start()
             }
@@ -47,11 +54,24 @@ final class AudioProbe {
 
         player.scheduleBuffer(buffer, completionHandler: nil)
         if !player.isPlaying { player.play() }
+        releaseAfterTone()
     }
 
     func stop() {
         if player.isPlaying { player.stop() }
         if engine.isRunning { engine.stop() }
+    }
+
+    /// Stop holding the audio system once the tone has finished, unless a line
+    /// is using it. Leaving an engine running for a half-second sound keeps
+    /// the session active for the life of the app.
+    private func releaseAfterTone() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard let self, LineManager.shared.squad == nil else { return }
+            self.stop()
+            AudioSession.shared.deactivate()
+        }
     }
 
     private static func tone(format: AVAudioFormat) -> AVAudioPCMBuffer? {
