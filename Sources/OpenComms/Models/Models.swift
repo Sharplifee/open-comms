@@ -114,31 +114,12 @@ enum FocusLength: Int, CaseIterable, Identifiable {
     var title: String { "\(rawValue) seconds" }
 }
 
-/// How hard the microphone is cleaned up before it goes out.
-///
-/// Two settings, not three, because there are only two genuinely different
-/// things the phone can do: run WebRTC's software noise suppression, or hand
-/// the capture to Apple's voice processing as well. A third notch would be a
-/// switch that moved and changed nothing.
-enum NoiseSuppression: String, Codable, CaseIterable {
-    case low, high
-    var title: String { self == .low ? "Low" : "High" }
-    var detail: String {
-        self == .low ? "Software cleanup. Leaves your music exactly as it was."
-                     : "Apple's voice processing on top. Cleaner mic on the speaker; on headphones it can flatten your music."
-    }
-}
-
 struct Preferences: Codable {
     var displayName = ""
     var music: MusicBehaviour = .turnDown
     var visibility: Visibility = .visible
     /// −55 dB to −12 dB. Low means a whisper opens the line.
     var sensitivity: Double = 0.55
-    /// Low by default. High hands capture to Apple's voice processing, which
-    /// on headphones can flatten the music sharing the session — it is there
-    /// for people on the speaker, where the echo path makes it worth it.
-    var noise: NoiseSuppression = .low
     /// Take the mic from Bluetooth headphones. Off by default because it
     /// forces the hands-free profile, which drops everything the headset
     /// plays to phone-call quality for as long as the mic is open.
@@ -151,8 +132,6 @@ struct Preferences: Codable {
     /// coming through without shouting. Headphones only; on the speaker it
     /// would feed back.
     var selfMonitor: Double = 0.2
-    /// How far the music drops while somebody is talking, as a fraction.
-    var duckAmount: Double = 0.35
     /// If the talking runs longer than `pauseAfter` seconds, pause the track
     /// entirely instead of leaving it ducked.
     var autoPause = false

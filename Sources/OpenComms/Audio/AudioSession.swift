@@ -67,8 +67,33 @@ final class AudioSession {
         session.currentRoute.outputs.contains { $0.portType == .carAudio }
     }
 
+    /// Whether other audio should be turned down right now. Set only while
+    /// somebody is actually speaking.
+    private var ducking = false
+
+    /// Duck without Apple's voice processor.
+    ///
+    /// `.duckOthers` is a category option: it asks the system to lower other
+    /// audio while this session is active, and it does not engage VPIO, so
+    /// nothing is reprocessed and nothing loses quality — the music simply
+    /// gets quieter and comes back. It is applied only while somebody is
+    /// speaking, because left on permanently it holds every other app down
+    /// for the whole life of the line.
+    func setDucking(_ on: Bool) {
+        guard configured, ducking != on else { return }
+        ducking = on
+        do {
+            lastSelfChange = Date()
+            try session.setCategory(.playAndRecord, mode: modeForCurrentRoute(), options: options)
+        } catch {
+            Log.audio.error("ducking change failed: \(error.localizedDescription)")
+            ducking = !on
+        }
+    }
+
     var options: AVAudioSession.CategoryOptions {
         var o: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker]
+        if ducking { o.insert(.duckOthers) }
         // Only ask for HFP when the person has accepted what it costs, and
         // only when Bluetooth is actually the thing playing. Requesting it on
         // CarPlay or wired headphones would be asking for a downgrade that
@@ -214,14 +239,23 @@ final class AudioSession {
     /// stays untouched, no matter what the noise setting says. Noise cleanup
     /// happens on the microphone instead, where it belongs.
     func modeForCurrentRoute() -> AVAudioSession.Mode {
-        // Voice processing exists to cancel a speaker feeding back into a
-        // microphone in the same room. That is true of the phone's speaker and
-        // it is true of a car — the car's speakers and the car's mic are a
-        // metre apart, and without cancellation the other person hears
-        // themselves. It is not true of headphones, where nothing the ear
-        // hears reaches the mic, and where the processing costs music quality
-        // for nothing.
-        (onSpeaker || onCarPlay) ? .voiceChat : .default
+        // ALWAYS .default. Never .voiceChat — and this is the "back room" bug.
+        //
+        // .voiceChat engages Apple's Voice Processing I/O, and VPIO is not a
+        // microphone feature. It takes over the whole output path: the music,
+        // the podcast, the other person, all of it runs through echo
+        // cancellation, hard gain control and a speech-shaped filter. That is
+        // precisely the sound being described — distant, hollow, like it moved
+        // to another room — and no category, option, buffer or route setting
+        // undoes it while it is engaged.
+        //
+        // It was here for the speaker and the car, where a real echo path
+        // exists between speaker and microphone. WebRTC has its own software
+        // echo cancellation for exactly that, and it runs on the captured
+        // microphone buffer alone without touching playback. So the speaker
+        // still gets cancellation and everything the person is listening to
+        // stays the quality its own app rendered.
+        .default
     }
 
     /// Re-apply the category when the noise setting changes mid-line, so the

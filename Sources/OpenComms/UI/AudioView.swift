@@ -41,10 +41,6 @@ struct AudioView: View {
                     }
                     if store.prefs.music == .turnDown {
                         divider
-                        slider("Duck amount", "\(Int(store.prefs.duckAmount * 100))%",
-                               "How far your music drops when someone speaks", $store.prefs.duckAmount)
-                            .onChange(of: store.prefs.duckAmount) { _, _ in line.applyMusicPolicy() }
-                        divider
                         toggle("Auto pause", "Pause the track entirely if the talking runs long", $store.prefs.autoPause)
                             .onChange(of: store.prefs.autoPause) { _, _ in line.applyMusicPolicy() }
                         if store.prefs.autoPause {
@@ -72,24 +68,6 @@ struct AudioView: View {
                            $store.prefs.useHeadsetMic)
                         .onChange(of: store.prefs.useHeadsetMic) { _, _ in line.applyMicSource() }
                     divider
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Noise suppression").font(.system(size: 15, weight: .semibold, design: .rounded))
-                        Text(store.prefs.noise.detail)
-                            .font(.system(size: 11.5, design: .rounded)).foregroundStyle(Theme.muted).padding(.top, 3)
-                        HStack(spacing: 0) {
-                            ForEach(NoiseSuppression.allCases, id: \.self) { level in
-                                Button(level.title) { store.prefs.noise = level; line.applyNoiseSetting() }
-                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                    .frame(maxWidth: .infinity).padding(.vertical, 9)
-                                    .background(store.prefs.noise == level ? Theme.raised : .clear,
-                                                in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                    .foregroundStyle(Theme.text)
-                            }
-                        }
-                        .padding(3)
-                        .background(Theme.base.opacity(0.5), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        .padding(.top, 12)
-                    }
                     .padding(EdgeInsets(top: 15, leading: 18, bottom: 15, trailing: 18))
                     divider
                     slider("How easily you trigger", "\(Int(store.prefs.thresholdDB)) dB · \(store.prefs.sensitivityLabel)",

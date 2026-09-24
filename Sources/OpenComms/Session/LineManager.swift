@@ -170,6 +170,11 @@ final class LineManager: NSObject, ObservableObject {
 
     private override init() {
         super.init()
+        // Before anything else touches audio. Disallowing the platform voice
+        // processor after a capture has already negotiated it means the first
+        // line of the session still runs through it.
+        try? AudioManager.shared.setPlatformVoiceProcessingAllowed(false)
+        AudioManager.shared.isVoiceProcessingBypassed = true
         // LiveKit configures AVAudioSession itself when its engine starts, and
         // its default asks for `.allowBluetooth` — the Bluetooth hands-free
         // profile, which drops AirPods to telephone-grade mono for everything
@@ -653,37 +658,50 @@ final class LineManager: NSObject, ObservableObject {
         AudioSession.shared.refreshMode()
     }
 
+    /// Apple's Voice Processing I/O is never used, and this is the fix for the
+    /// "everything sounds like it moved to a back room" complaint.
+    ///
+    /// VPIO is a telephony processor. When it is engaged, EVERYTHING sharing
+    /// the output — the music, the podcast, the other person — goes through
+    /// echo cancellation, aggressive gain control and a speech-shaped filter.
+    /// That is what makes a track suddenly sound distant, hollow and thin. No
+    /// category, mode, buffer or route setting undoes it while it is on,
+    /// which is why every previous attempt left the symptom untouched.
+    ///
+    /// LiveKit falls back to WebRTC's own SOFTWARE echo cancellation, which
+    /// runs on the captured microphone buffer alone and never touches
+    /// playback. The person on the other end still gets a clean signal; the
+    /// music stays exactly as its own app rendered it.
     func applyNoiseSetting() {
         do {
-            try AudioManager.shared.setPlatformVoiceProcessingAllowed(store.prefs.noise == .high)
+            // Disallow the platform path outright, rather than leaving it to
+            // whatever the next capture negotiates.
+            try AudioManager.shared.setPlatformVoiceProcessingAllowed(false)
+            AudioManager.shared.isVoiceProcessingBypassed = true
         } catch {
-            Log.audio.error("noise setting failed: \(error.localizedDescription)")
+            Log.audio.error("could not disable voice processing: \(error.localizedDescription)")
         }
     }
 
-    /// How the music behaves is Apple's job, not ours.
+    /// Ducking is off, and that is deliberate.
     ///
-    /// `isAdvancedDuckingEnabled` lowers other audio while a voice is actually
-    /// present and lifts it the moment nobody is talking — the SharePlay
-    /// behaviour — so there is nothing to flip on and off at the edges of a
-    /// sentence and nothing left ducked if a line drops mid-word.
+    /// LiveKit's ducking controls are Apple's ducking controls — they only do
+    /// anything while Apple's voice processing is running, because that is the
+    /// thing performing the duck. Asking for ducking therefore asks for VPIO,
+    /// and VPIO is exactly what was wrecking the music. The two cannot both be
+    /// had: system ducking costs the quality of everything you are listening
+    /// to, for as long as the line is open.
     ///
-    /// The duck amount slider picks the system level. Apple exposes four
-    /// notches, not a continuum, so the slider is bucketed rather than lying
-    /// about a smooth curve it cannot deliver.
+    /// So the line arrives over the top at full quality and the music stays
+    /// full quality behind it, which is how a conversation in a room actually
+    /// works. "Pause and rewind" still does exactly what it says, because that
+    /// is this app pausing a track rather than the system reprocessing one.
     func applyMusicPolicy() {
-        let prefs = store.prefs
-        AudioManager.shared.isAdvancedDuckingEnabled = prefs.music == .turnDown
+        AudioManager.shared.isAdvancedDuckingEnabled = false
         if #available(iOS 17, *) {
-            AudioManager.shared.duckingLevel = prefs.music != .turnDown ? .min : {
-                switch prefs.duckAmount {
-                case ..<0.2:  return .min
-                case ..<0.5:  return .default
-                case ..<0.8:  return .mid
-                default:      return .max
-                }
-            }()
+            AudioManager.shared.duckingLevel = .min
         }
+        let prefs = store.prefs
         MusicController.shared.autoPause = prefs.autoPause
         MusicController.shared.pauseAfter = TimeInterval(prefs.pauseAfter)
         MusicController.shared.autoRewind = prefs.autoRewind
@@ -798,6 +816,7 @@ final class LineManager: NSObject, ObservableObject {
         if anyoneTalking {
             guard !musicIsYielding else { return }
             musicIsYielding = true
+            if store.prefs.music == .turnDown { AudioSession.shared.setDucking(true) }
             MusicController.shared.speechBegan(store.prefs.music)
             return
         }
@@ -807,6 +826,7 @@ final class LineManager: NSObject, ObservableObject {
             try? await Task.sleep(for: .milliseconds(900))
             guard !Task.isCancelled, let self else { return }
             self.musicIsYielding = false
+            AudioSession.shared.setDucking(false)
             MusicController.shared.speechEnded(self.store.prefs.music)
         }
     }
