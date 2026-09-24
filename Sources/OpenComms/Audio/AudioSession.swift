@@ -9,14 +9,20 @@ import LiveKit
 /// `.mixWithOthers` is permanent, because the entire product is voices sitting
 /// on top of music rather than replacing it.
 ///
-/// `.duckOthers` is NEVER permanent. Leaving it set — together with a
-/// permanent `.voiceChat` mode — degraded background audio quality even when
-/// nobody was talking, and it took weeks to find. Ducking belongs at the edges
-/// of speech, applied and removed, never a standing condition.
+/// `.duckOthers` is NEVER permanent. It goes on when somebody starts talking
+/// and comes off when they stop. Left standing it holds every other app down
+/// for the whole life of the line.
 ///
-/// The mode follows the route. On headphones there is no echo path worth
-/// cancelling, so `.default` keeps the music clean. On the speaker there very
-/// much is, so `.voiceChat` earns its cost there and only there.
+/// The mode is ALWAYS `.default`. `.voiceChat` engages Apple's Voice
+/// Processing I/O, which is not a microphone feature — it reshapes everything
+/// sharing the output into something distant and hollow, music included. That
+/// was the "back room" sound, and it survived every other fix because nothing
+/// else in the session undoes it. Echo cancellation for the speaker and the
+/// car comes from WebRTC's software implementation instead, which works on the
+/// captured microphone buffer alone and never touches playback.
+///
+/// Nothing here asks for a sample rate or a buffer size. Those reconfigure the
+/// audio DEVICE, and a rate switch stops whatever is already playing.
 @MainActor
 final class AudioSession {
     static let shared = AudioSession()
@@ -133,9 +139,9 @@ final class AudioSession {
     /// gets ours instead: the same options the rest of the app uses, without
     /// HFP unless the person asked for it, and a mode chosen for the route.
     ///
-    /// `.default` on headphones is deliberate and load-bearing. `.voiceChat`
-    /// and `.videoChat` put iOS into a call-tuned gain profile that also makes
-    /// playback noticeably quieter, on top of the processing cost to music.
+    /// `.default` is not negotiable here either — the mode travels with the
+    /// configuration, so handing LiveKit a chat mode would re-engage the voice
+    /// processor through the back door.
     static func livekitConfiguration() -> AudioSessionConfiguration {
         let shared = AudioSession.shared
         return AudioSessionConfiguration(category: .playAndRecord,
@@ -228,16 +234,11 @@ final class AudioSession {
         session.currentRoute.outputs.first?.portType == .builtInSpeaker
     }
 
-    /// `.voiceChat` puts the whole session through Apple's voice processing.
-    /// On the speaker that is mandatory — there is a real echo path between
-    /// the speaker and the mic — and it is worth what it costs.
+    /// The mode this session runs in, on every route.
     ///
-    /// On headphones there is no echo to cancel and it costs plenty: voice
-    /// processing reshapes everything the session touches, which is exactly
-    /// how the old app ended up with music that sounded thin and boxy the
-    /// whole time a line was open. Headphones stay `.default` and the music
-    /// stays untouched, no matter what the noise setting says. Noise cleanup
-    /// happens on the microphone instead, where it belongs.
+    /// It is always `.default`, and the body explains why at length: the
+    /// alternative engages Apple's voice processor, which degrades everything
+    /// sharing the output rather than just the microphone.
     func modeForCurrentRoute() -> AVAudioSession.Mode {
         // ALWAYS .default. Never .voiceChat — and this is the "back room" bug.
         //
