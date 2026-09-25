@@ -175,6 +175,15 @@ final class LineManager: NSObject, ObservableObject {
         // line of the session still runs through it.
         try? AudioManager.shared.setPlatformVoiceProcessingAllowed(false)
         AudioManager.shared.isVoiceProcessingBypassed = true
+
+        // The one place that knows whether this app has any business holding
+        // the audio session: a line is open, or the person deliberately
+        // started the meter. Anything else and an interruption that ends is
+        // somebody else's music starting, which the app leaves alone.
+        AudioSession.shared.wantsSession = { [weak self] in
+            guard let self else { return false }
+            return self.squad != nil || self.detector.isListening
+        }
         // LiveKit configures AVAudioSession itself when its engine starts, and
         // its default asks for `.allowBluetooth` — the Bluetooth hands-free
         // profile, which drops AirPods to telephone-grade mono for everything

@@ -26,6 +26,14 @@ import LiveKit
 @MainActor
 final class AudioSession {
     static let shared = AudioSession()
+
+    /// Whether the app has a live reason to hold the audio session — a line
+    /// open, or the meter deliberately running. Set once by LineManager.
+    ///
+    /// Without this the app answered "yes, mine" to every interruption that
+    /// ended, including the ones it caused by being in the foreground while
+    /// somebody pressed play in another app.
+    var wantsSession: () -> Bool = { false }
     private let session = AVAudioSession.sharedInstance()
     private var configured = false
     private var observing = false
@@ -297,15 +305,29 @@ final class AudioSession {
                   let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
             switch type {
             case .began:
-                // A phone call takes the mic. Nothing to undo here any more —
-                // the system owns ducking, so it lifts on its own — but the
-                // session must be rebuilt when the call ends.
-                break
+                // Something else took the audio. That something is usually
+                // the person opening Apple Music, and the app no longer
+                // considers the session its own from this moment.
+                self.configured = false
             case .ended:
-                // Only come back if the session was ours to begin with.
-                // Reactivating after an interruption the app was not part of
-                // would take audio away from whatever is playing now.
-                guard self.configured else { break }
+                // THIS is what was killing the music.
+                //
+                // Starting Apple Music interrupts this session, and iOS then
+                // posts .ended once the new owner has settled. The old code
+                // treated that as "our turn again" and reactivated
+                // .playAndRecord — which takes the route straight back and
+                // stops the track the person just started. Every time. It did
+                // not matter whether a line was open, because the only test
+                // was whether the app had configured a session at some point.
+                //
+                // Two conditions now, both required. iOS has to actually ask
+                // for a resume, and the app has to have a live reason to be
+                // holding audio at all. Otherwise it stays out of the way and
+                // the music keeps playing, which is the entire point of the
+                // product.
+                let raw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let invited = AVAudioSession.InterruptionOptions(rawValue: raw).contains(.shouldResume)
+                guard invited, self.wantsSession() else { break }
                 self.configured = false
                 self.configure()
             @unknown default: break

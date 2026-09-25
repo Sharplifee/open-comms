@@ -242,6 +242,12 @@ final class VoiceDetector: ObservableObject {
     /// Stop the engine but remember that the meter is meant to be live, so a
     /// route change or an interruption comes back on its own.
     private func restartIfRunning() {
+        // Same rule as the session: an interruption that ended is not an
+        // invitation to take the microphone back. Starting this engine
+        // activates the session, so restarting it after somebody pressed play
+        // in Apple Music would stop their track just as surely as
+        // reactivating the session directly.
+        guard AudioSession.shared.wantsSession() else { running = false; return }
         guard running, !restarting else { return }
         restarting = true
         defer { restarting = false }
