@@ -60,6 +60,68 @@ final class LineManager: NSObject, ObservableObject {
     /// Exposed read-only so the sound check can report what LiveKit actually
     /// has — subscribed tracks, mute states — rather than what the app thinks.
     let room = Room()
+
+    /// How hard LiveKit tries before it admits the connection is gone.
+    ///
+    /// The default is ten attempts over about forty seconds. That is a policy
+    /// for a video call somebody is sitting in front of; this is a line meant
+    /// to stay open across a drive, a building, a dead spot at the far end of
+    /// a court. Thirty attempts on a curve that tops out at ten seconds covers
+    /// roughly five minutes of bad network WITHOUT the app noticing, and the
+    /// SDK's own path resumes the existing session rather than rebuilding it,
+    /// so the tracks survive and nobody hears a gap.
+    ///
+    /// Distance is not a factor in any of this. Everything goes through
+    /// LiveKit's cloud, so Utah to Michigan is the same number of hops as two
+    /// people on the same court — the only thing that ever varies is whether
+    /// each phone can reach the internet, which is what this budget is for.
+    private static let connectPolicy = ConnectOptions(
+        reconnectAttempts: 30,
+        reconnectMaxDelay: 10,
+        socketConnectTimeoutInterval: 15)
+
+    /// Rebuild the member list from the room itself.
+    ///
+    /// Events alone were never enough. LiveKit fires `participantDidConnect`
+    /// only for people who arrive AFTER the connection is up — anybody
+    /// already in the room when you join arrives in the join response and
+    /// fires nothing. So joining a line somebody was already on left them off
+    /// the list entirely, and every reconnect dropped whoever was there.
+    ///
+    /// Reconciling against `room.remoteParticipants` fixes both, and it is
+    /// idempotent, so it can run after a connect, after a reconnect, when the
+    /// app comes back to the foreground, and on the watchdog tick without
+    /// having to reason about which event did or did not arrive.
+    func syncMembers() {
+        let live = room.remoteParticipants.values
+        let chosen = store.prefs.theirVolume
+
+        for participant in live {
+            guard let id = participant.identity?.stringValue else { continue }
+            if let index = members.firstIndex(where: { $0.deviceID == id }) {
+                if let name = participant.name, !name.isEmpty {
+                    members[index].displayName = name
+                }
+            } else {
+                let isBlocked = blockedDevices.contains(id)
+                members.append(Member(deviceID: id,
+                                      displayName: participant.name ?? "Someone",
+                                      mutedForMe: isBlocked,
+                                      volume: chosen))
+                apply(volume: isBlocked ? 0 : chosen, to: id)
+            }
+        }
+
+        let present = Set(live.compactMap { $0.identity?.stringValue })
+        members.removeAll { !$0.isSelf && !present.contains($0.deviceID) }
+
+        if !members.contains(where: { $0.isSelf }) {
+            members.insert(Member(deviceID: DeviceIdentity.id,
+                                  displayName: store.prefs.displayName.isEmpty
+                                      ? "You" : store.prefs.displayName,
+                                  isSelf: true), at: 0)
+        }
+    }
     /// Exposed so the meter can observe it directly. Reading `level` through
     /// this manager was a computed pass-through, and a computed property does
     /// not publish — the detector updated twenty times a second and the view
@@ -350,7 +412,8 @@ final class LineManager: NSObject, ObservableObject {
                 return
             }
             squad = opened
-            try await room.connect(url: Config.livekitURL, token: token)
+            try await room.connect(url: Config.livekitURL, token: token,
+                                   connectOptions: LineManager.connectPolicy)
             try await room.localParticipant.setMicrophone(enabled: true)
 
             connecting = false
@@ -360,6 +423,10 @@ final class LineManager: NSObject, ObservableObject {
             applyChosenVolume()
             Cues.opened(store.prefs.soundCues)
             applyCourtRole()
+            // Anybody already on the line arrives in the join response and
+            // fires no delegate callback, so joining an open line left the
+            // person already there off the list entirely.
+            syncMembers()
             startHeartbeat(opened.id)
             watchForSilence(opened.id)
         } catch {
@@ -407,14 +474,37 @@ final class LineManager: NSObject, ObservableObject {
     /// Six attempts over about a minute and a half. Past that it is not a blip
     /// and pretending otherwise wastes the person's time, so the line closes
     /// and says so.
+    /// Get the line back, and keep trying until it comes back or the person
+    /// leaves.
+    ///
+    /// The old version gave up after six attempts — about a minute — and then
+    /// killed the line for good. A minute is a tunnel. It is a lift. It is the
+    /// far end of a parking structure. Anybody who hit one of those had the
+    /// session declared dead underneath them and had to notice, and reopen,
+    /// and tell the other person to reopen too. That is the disconnect that
+    /// "just happens for no reason".
+    ///
+    /// Two changes. Nothing counts an attempt while the phone has no network,
+    /// because burning the budget on a dead radio is how a thirty-second dead
+    /// spot used up every retry. And there is no budget any more: it backs off
+    /// to fifteen seconds and stays there for as long as the line is open. A
+    /// line only ends when somebody ends it.
     private func beginReconnect(to squad: Squad) {
         guard reconnect == nil else { return }
         say("Connection dropped. Reconnecting…", sticky: true)
         reconnect = Task { [weak self] in
-            for attempt in 0..<6 {
-                try? await Task.sleep(for: .seconds(Double(1 << attempt)))
-                guard let self, !Task.isCancelled, self.phase == .open else { return }
-                guard Reachability.shared.online else { continue }
+            var attempt = 0
+            while !Task.isCancelled {
+                guard let self, self.phase == .open, self.squad != nil else { return }
+
+                // Wait for a network rather than spending a retry on its
+                // absence. Checked every second so the line comes back the
+                // moment signal does, not on the next step of a backoff.
+                if !Reachability.shared.online {
+                    try? await Task.sleep(for: .seconds(1))
+                    continue
+                }
+
                 do {
                     try await self.enterRoom(squad)
                     self.bannerTimer?.cancel()
@@ -423,13 +513,43 @@ final class LineManager: NSObject, ObservableObject {
                     Cues.opened(self.store.prefs.soundCues)
                     return
                 } catch {
-                    Log.audio.info("reconnect attempt \(attempt + 1) failed")
+                    attempt += 1
+                    Log.audio.info("reconnect attempt \(attempt) failed")
+                    if attempt == 4 {
+                        self.say("Still trying to get back on the line…", sticky: true)
+                    }
+                    // 1, 2, 4, 8, then every 15 seconds for as long as it takes.
+                    let delay = min(15.0, pow(2.0, Double(min(attempt, 4))))
+                    try? await Task.sleep(for: .seconds(delay))
                 }
             }
-            guard let self, !Task.isCancelled else { return }
-            self.reconnect = nil
-            await self.teardown()
-            self.phase = .failed("Lost the line and couldn't get it back. Open it again when you have signal.")
+        }
+    }
+
+    /// Called when the app comes back to the foreground, and whenever the
+    /// watchdog notices the room is not connected.
+    ///
+    /// iOS can tear a socket down while the app is suspended and deliver
+    /// nothing about it. Without this the app came back showing an open line
+    /// that had actually been dead since the screen locked — connected on
+    /// screen, silent in both ears.
+    func recoverIfDropped() {
+        guard phase == .open, let squad, reconnect == nil else { return }
+        switch room.connectionState {
+        case .connected:
+            // Up and fine. Reconcile in case an arrival event went missing
+            // while the app was away.
+            syncMembers()
+        case .connecting, .reconnecting:
+            // The SDK is already on it, and its own path RESUMES the session
+            // rather than rebuilding it — the tracks survive and nobody hears
+            // a gap. Starting a fresh connect on top of that throws away the
+            // better recovery, so this waits.
+            break
+        case .disconnected, .disconnecting:
+            beginReconnect(to: squad)
+        @unknown default:
+            beginReconnect(to: squad)
         }
     }
 
@@ -442,25 +562,37 @@ final class LineManager: NSObject, ObservableObject {
         AudioManager.shared.sessionConfiguration = AudioSession.livekitConfiguration()
         applyNoiseSetting()
         applyMusicPolicy()
-        try await room.connect(url: Config.livekitURL, token: token)
+        try await room.connect(url: Config.livekitURL, token: token,
+                               connectOptions: LineManager.connectPolicy)
         try await room.localParticipant.setMicrophone(enabled: true)
 
         self.squad = squad
-        self.openedAt = Date()
         self.phase = .open
         self.micLive = true
-        self.members = [Member(deviceID: DeviceIdentity.id,
-                               displayName: store.prefs.displayName.isEmpty ? "You" : store.prefs.displayName,
-                               isSelf: true)]
+        // NOT reset to Date(). The line did not restart, it came back, and
+        // resetting this made a two-hour session claim it was ten seconds old
+        // every time the signal wobbled.
+        if self.openedAt == nil { self.openedAt = Date() }
+
         store.remember(squad)
-        detector.threshold = store.prefs.thresholdDB
-        detector.selfMonitorGain = Float(store.prefs.selfMonitor)
-        detector.start()
+        // The detector deliberately does NOT start here. Starting it activates
+        // an AVAudioEngine on the same microphone LiveKit has just taken,
+        // which is the fight that leaves one side silent — and this path ran
+        // on every single reconnect, so a line that dropped once could come
+        // back with no microphone at all.
         blockedDevices = Set(await Backend.shared.blocked().map(\.device_id))
+        // Rebuilt from the room rather than replaced with an empty list.
+        // Wiping it here is why the other person vanished after a reconnect
+        // even though their audio was still arriving.
+        syncMembers()
         applyChosenVolume()
         Cues.opened(store.prefs.soundCues)
         Haptics.tap()
         startHeartbeat(squad.id)
+        // Reconnecting used to lose the self-repair watchdog, so the one path
+        // most likely to come back subtly broken was the one with nothing
+        // watching it.
+        watchForSilence(squad.id)
     }
 
     // MARK: - Leaving
@@ -755,6 +887,23 @@ final class LineManager: NSObject, ObservableObject {
         }
     }
 
+    /// The socket, in plain words. "Connected" on the line row only ever meant
+    /// the app believed a line existed — it said nothing about whether the
+    /// connection under it was alive, which is the exact gap that let a dead
+    /// line look healthy.
+    var linkState: String {
+        switch room.connectionState {
+        case .connected:     return reconnect == nil ? "Connected" : "Connected · recovering"
+        case .connecting:    return "Connecting"
+        case .reconnecting:  return "Reconnecting"
+        case .disconnecting: return "Disconnecting"
+        case .disconnected:  return reconnect == nil ? "Disconnected" : "Retrying"
+        @unknown default:    return "Unknown"
+        }
+    }
+
+    var linkIsHealthy: Bool { room.connectionState == .connected }
+
     /// What is actually arriving from the other end, in plain terms.
     ///
     /// The one-way-audio failure was invisible from inside the app: the line
@@ -863,6 +1012,22 @@ final class LineManager: NSObject, ObservableObject {
                 try? await Task.sleep(for: .seconds(6))
                 guard let self, self.squad?.id == squadID else { return }
 
+                // A room that is not connected is not silence to repair, it
+                // is a line to get back. iOS can kill the socket while the app
+                // is suspended and deliver no event at all, so something has
+                // to actually look rather than wait to be told.
+                guard self.room.connectionState == .connected else {
+                    // recoverIfDropped decides whether this needs help or is
+                    // already being handled by the SDK's own resume.
+                    self.recoverIfDropped()
+                    strikes = 0
+                    continue
+                }
+
+                // Cheap, idempotent, and the only thing that catches a
+                // participant whose arrival event went missing.
+                self.syncMembers()
+
                 let tracks = self.incomingTracks
                 // Nobody else here, or nothing subscribed yet, is not silence
                 // — it is an empty room, and there is nothing to repair.
@@ -897,15 +1062,27 @@ final class LineManager: NSObject, ObservableObject {
     private func startHeartbeat(_ squadID: String) {
         heartbeat?.cancel()
         heartbeat = Task { [weak self] in
+            var misses = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(45))
+                // Every 30s rather than 45. The server prunes a member it has
+                // not heard from, and a phone that misses one beat while
+                // backgrounded should still be comfortably inside that window.
+                try? await Task.sleep(for: .seconds(30))
                 guard let self else { return }
                 let alive = await Backend.shared.heartbeat(squadID: squadID)
+                // Two in a row before tearing anything down. A single false
+                // can be a read that raced the host's own row being written,
+                // and ending a live conversation over one unlucky query is a
+                // far worse failure than staying up forty-five seconds too
+                // long.
+                if alive { misses = 0 }
                 // The end-of-line broadcast only reaches a phone that is
                 // connected. One that was asleep, or briefly offline, would
                 // otherwise sit on a line that no longer exists showing a code
                 // nobody can join. The heartbeat is the backstop.
                 if !alive {
+                    misses += 1
+                    guard misses >= 2 else { continue }
                     await self.teardown()
                     self.say("That line has ended.")
                     return

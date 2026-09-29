@@ -32,11 +32,22 @@ struct OpenCommsApp: App {
         }
     }
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             RootView()
                 .preferredColorScheme(.dark)
                 .tint(Theme.signal)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Coming back from the background is the single most likely moment
+            // to find a line that is open on screen and dead underneath. iOS
+            // can drop the socket while the app is suspended and deliver
+            // nothing about it, so the app looks for itself instead of
+            // trusting an event that may never arrive.
+            guard phase == .active else { return }
+            LineManager.shared.recoverIfDropped()
         }
     }
 }

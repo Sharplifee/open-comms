@@ -120,10 +120,18 @@ struct Preferences: Codable {
     var visibility: Visibility = .visible
     /// −55 dB to −12 dB. Low means a whisper opens the line.
     var sensitivity: Double = 0.55
-    /// Take the mic from Bluetooth headphones. Off by default because it
-    /// forces the hands-free profile, which drops everything the headset
-    /// plays to phone-call quality for as long as the mic is open.
-    var useHeadsetMic = false
+    /// Take the mic from Bluetooth earbuds. ON by default: if somebody is
+    /// wearing earbuds, the earbuds are what they expect to talk into, and
+    /// the phone is usually in a pocket where its own mic is useless.
+    ///
+    /// Only Bluetooth is affected. Wired earbuds and CarPlay use their own
+    /// microphone regardless, and cost nothing to do so.
+    ///
+    /// The cost on Bluetooth is real: it forces the hands-free profile, which
+    /// carries everything the earbuds play at phone-call quality while the
+    /// line is open. Turn it off to keep music at full quality and talk
+    /// through the phone instead.
+    var useHeadsetMic = true
     var lowPower = false
     var soundCues = true
     /// Intercom volume — how loud everybody else comes through.

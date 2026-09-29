@@ -126,10 +126,37 @@ final class AudioSession {
         guard let inputs = session.availableInputs else { return }
         let wanted: AVAudioSession.Port? = {
             if onCarPlay { return .carAudio }
-            if useHeadsetMic, onBluetoothOutput { return .bluetoothHFP }
-            if session.currentRoute.outputs.contains(where: { $0.portType == .headphones }) {
+
+            // WIRED EARBUDS: always their microphone, no question and no cost.
+            // The phone is in a pocket and the mic is four inches from the
+            // mouth, and a wired headset mic changes nothing about the output.
+            // This is checked before Bluetooth because a wired set plugged in
+            // is unambiguous about what the person is wearing.
+            if session.currentRoute.outputs.contains(where: {
+                $0.portType == .headphones || $0.portType == .usbAudio
+            }) {
                 return .headsetMic
             }
+
+            // BLUETOOTH EARBUDS: their microphone when the person has asked
+            // for it, which is now the default.
+            //
+            // This one genuinely costs something and there is no way around
+            // it today. Using an AirPods microphone means the Bluetooth link
+            // switches to the hands-free profile, and that profile carries
+            // EVERYTHING at telephone quality, not just the voice line.
+            //
+            // iOS 26 added `.bluetoothHighQualityRecording` for exactly this,
+            // and it does not work here: with LiveKit's engine it leaves
+            // capture stopped and nothing audible in the AirPods at all
+            // (livekit/client-sdk-react-native#467). That is the one-way
+            // silence this app already shipped once, so it stays out until it
+            // is fixed upstream.
+            //
+            // So the trade is real and the switch in Audio is how somebody
+            // takes the other side of it.
+            if useHeadsetMic, onBluetoothOutput { return .bluetoothHFP }
+
             return nil          // built-in mic is the right answer otherwise
         }()
         guard let wanted, let port = inputs.first(where: { $0.portType == wanted }) else {

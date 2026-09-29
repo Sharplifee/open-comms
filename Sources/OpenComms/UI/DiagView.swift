@@ -30,6 +30,8 @@ struct DiagView: View {
                     row("Location", nearby.denied ? "Denied" : "Granted", nearby.denied ? .bad : .good)
                     row("Network", net.online ? "Online" : "Offline", net.online ? .good : .bad)
                     row("Line", connectionText, line.squad == nil ? .idle : .good)
+                    row("Connection", line.squad == nil ? "—" : line.linkState,
+                        line.squad == nil ? .idle : (line.linkIsHealthy ? .good : .bad))
                     row("On the line", "\(line.members.count)", line.members.isEmpty ? .idle : .good)
                     // The four facts that separate "they can't hear me" from
                     // "I can't hear them". All of these were available during
@@ -183,6 +185,7 @@ struct DiagView: View {
         network: \(net.online ? "online" : "offline")
         line: \(connectionText)
         members: \(line.members.count)
+        link: \(line.linkState)
         nearby: \(nearby.people.count)
         incoming: \(incoming)
         session: \(AudioSession.shared.liveDescription)
