@@ -497,6 +497,17 @@ final class LineManager: NSObject, ObservableObject {
             while !Task.isCancelled {
                 guard let self, self.phase == .open, self.squad != nil else { return }
 
+                // The SDK's own resume can succeed while this loop is
+                // sleeping. Tearing that down to rebuild it by hand would
+                // drop a working line to replace it with a worse one.
+                if self.room.connectionState == .connected {
+                    self.syncMembers()
+                    self.bannerTimer?.cancel()
+                    self.banner = nil
+                    self.reconnect = nil
+                    return
+                }
+
                 // Wait for a network rather than spending a retry on its
                 // absence. Checked every second so the line comes back the
                 // moment signal does, not on the next step of a backoff.
@@ -534,7 +545,7 @@ final class LineManager: NSObject, ObservableObject {
     /// that had actually been dead since the screen locked — connected on
     /// screen, silent in both ears.
     func recoverIfDropped() {
-        guard phase == .open, let squad, reconnect == nil else { return }
+        guard !leaving, phase == .open, let squad, reconnect == nil else { return }
         switch room.connectionState {
         case .connected:
             // Up and fine. Reconcile in case an arrival event went missing
@@ -562,13 +573,21 @@ final class LineManager: NSObject, ObservableObject {
         AudioManager.shared.sessionConfiguration = AudioSession.livekitConfiguration()
         applyNoiseSetting()
         applyMusicPolicy()
+        // Whether you were muted is the one piece of session state that must
+        // survive this, and it did not. Coming back from a dropped connection
+        // turned the microphone on regardless, so anybody who had muted
+        // themselves and then walked through a dead spot was live again
+        // without being told. That is the kind of thing somebody finds out
+        // from the other person.
+        let wasMuted = !self.micLive
+
         try await room.connect(url: Config.livekitURL, token: token,
                                connectOptions: LineManager.connectPolicy)
-        try await room.localParticipant.setMicrophone(enabled: true)
+        try await room.localParticipant.setMicrophone(enabled: !wasMuted)
 
         self.squad = squad
         self.phase = .open
-        self.micLive = true
+        self.micLive = !wasMuted
         // NOT reset to Date(). The line did not restart, it came back, and
         // resetting this made a two-hour session claim it was ten seconds old
         // every time the signal wobbled.
@@ -630,7 +649,19 @@ final class LineManager: NSObject, ObservableObject {
     /// so a future message type can never be mistaken for one of them.
     static let courtTopic = "opencomms.court"
 
+    /// Set while the app is deliberately closing a line, so the disconnect it
+    /// causes is not mistaken for one it suffered.
+    ///
+    /// `room.disconnect()` fires the same delegate a dropped connection does,
+    /// and teardown is suspended on that await when it arrives — phase still
+    /// open, squad still set — so leaving a line started a reconnect and left
+    /// its sticky "Connection dropped" banner on screen with nothing to clear
+    /// it.
+    private var leaving = false
+
     private func teardown() async {
+        leaving = true
+        defer { leaving = false }
         heartbeat?.cancel(); heartbeat = nil
         detector.stop()
         restoreMusic?.cancel(); restoreMusic = nil
@@ -1165,7 +1196,7 @@ extension LineManager: RoomDelegate {
 
     nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
         Task { @MainActor in
-            guard phase == .open, let squad else { return }
+            guard !leaving, phase == .open, let squad else { return }
             // This used to set a banner saying "reconnecting…" and then do
             // nothing at all. The line stayed dead and the message stayed on
             // screen, which is worse than saying nothing: it told somebody to
